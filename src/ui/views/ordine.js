@@ -6,6 +6,7 @@ import {
   topTypes, subTypes, type, deliveryPointsOf,
 } from '../../domain/warehouse.js';
 import { addQty, setQty, clearOrder, orderTotals, sendOrder } from '../../domain/orders.js';
+import { orderDocHtml } from '../../domain/orderpdf.js';
 import { go } from '../app.js';
 
 const fmtBadge = f => f ? `<span class="badge soft" style="font-size:10px">${esc(f)}</span>` : '';
@@ -134,30 +135,4 @@ function generate(lid, dpId, rerender) {
   // La stampa (window.print) blocca il thread: la ritardiamo così il salvataggio
   // debounced dell'ordine viene confermato dal server PRIMA di aprire la finestra di stampa.
   setTimeout(() => printDocument('Ordine', orderDocHtml(l, order, dp)), 400);
-}
-
-// Documento stampabile: una sezione per fornitore (nuova pagina), tabella prodotto/formato/qtà.
-function orderDocHtml(l, order, dp) {
-  const dateStr = new Date(order.sentAt).toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' });
-  // raggruppa le righe per fornitore mantenendo l'ordine
-  const groups = [];
-  const idx = {};
-  order.lines.forEach(ln => {
-    const key = ln.supplierId || '__none__';
-    if (idx[key] == null) { idx[key] = groups.length; groups.push({ name: ln.supplierName || 'Senza fornitore', items: [] }); }
-    groups[idx[key]].items.push(ln);
-  });
-  const dpBox = dp ? `<div class="meta"><b>📍 Consegna:</b> ${esc(dp.name)}${dp.address ? ' — ' + esc(dp.address) : ''}${dp.phone ? ' · ' + esc(dp.phone) : ''}</div>` : '';
-
-  return groups.map((g, i) => {
-    const rows = g.items.map(it => `<tr><td>${esc(it.name)}${it.notes ? `<br><span style="color:#888;font-size:11px">${esc(it.notes)}</span>` : ''}</td><td>${esc(it.format || '—')}</td><td style="text-align:right;font-weight:700">${it.qty}</td></tr>`).join('');
-    const pezzi = g.items.reduce((s, it) => s + it.qty, 0);
-    return `<div ${i > 0 ? 'style="page-break-before:always"' : ''}>
-      <h1>${esc(g.name)}</h1>
-      <div class="meta">${esc(l?.name || '')} · Ordine del ${dateStr}</div>
-      ${dpBox}
-      <table><thead><tr><th>Prodotto</th><th>Formato</th><th style="text-align:right">Qtà</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="meta">Totale righe: ${g.items.length} · Totale pezzi: ${pezzi}</div>
-    </div>`;
-  }).join('');
 }

@@ -6,12 +6,27 @@ import { data, save } from '../state/store.js';
 import { uid } from './util.js';
 import { loc, product, supplierName, orderLines, currentOrderOf } from './warehouse.js';
 
+// ---- storico ----
+export function deleteOrder(id) {
+  data.orders = data.orders.filter(o => o.id !== id); save();
+}
+// "Ri-ordina": ricarica le quantità di un ordine passato nell'ordine in corso del suo locale,
+// solo per i prodotti ancora esistenti. Ritorna il numero di righe ricaricate.
+export function reorderFrom(order) {
+  const l = loc(order.localeId); if (!l) return 0;
+  const co = {};
+  let n = 0;
+  (order.lines || []).forEach(ln => { if (product(ln.productId) && ln.qty > 0) { co[ln.productId] = (co[ln.productId] || 0) + ln.qty; n++; } });
+  l.currentOrder = co; save();
+  return n;
+}
+
 export function setQty(localeId, productId, qty) {
   const l = loc(localeId); if (!l) return;
   qty = Math.max(0, Math.floor(+qty) || 0);
   if (qty > 0) l.currentOrder[productId] = qty;
   else delete l.currentOrder[productId];
-  save();
+  save({ silent: true }); // niente emit/re-render globale: la vista Ordine aggiorna la riga da sé
 }
 export function addQty(localeId, productId, delta) {
   setQty(localeId, productId, (currentOrderOf(localeId)[productId] || 0) + delta);

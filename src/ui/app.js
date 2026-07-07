@@ -6,18 +6,19 @@ import { esc } from '../domain/util.js';
 
 import * as ordine from './views/ordine.js';
 import * as dashboard from './views/dashboard.js';
+import * as storico from './views/storico.js';
 import * as database from './views/database.js';
 import * as impostazioni from './views/impostazioni.js';
 
-// Fase 2: Ordine (quantità → PDF per fornitore, con salvataggio nello storico) + Database.
-// Storico, Report e Scorte arrivano nei passi successivi.
+// Fase 3: Storico ordini (consulta/ristampa/ri-ordina). Report e Scorte a seguire.
 const VIEWS = {
   ord: { mod: ordine, title: 'Ordine', icon: '🛒' },
   dash: { mod: dashboard, title: 'Dashboard', icon: '📊' },
+  stor: { mod: storico, title: 'Storico', icon: '🕘' },
   db: { mod: database, title: 'Database', icon: '📦' },
   set: { mod: impostazioni, title: 'Impostazioni', icon: '⚙' }
 };
-const ORDER = ['ord', 'dash', 'db', 'set'];
+const ORDER = ['ord', 'dash', 'stor', 'db', 'set'];
 
 let current = 'ord';
 let mql = window.matchMedia('(prefers-color-scheme: dark)');
