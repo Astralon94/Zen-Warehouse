@@ -143,7 +143,7 @@ export function render() {
     <div class="card kpi"><div class="lbl">Righe</div><div class="val tnum">${r.totals.righe}</div></div>
     <div class="card kpi"><div class="lbl">Fornitori</div><div class="val tnum">${r.totals.suppliers}</div></div>
   </div>`;
-  h += `<div class="grid k4" style="margin-bottom:16px">
+  h += `<div class="grid k3" style="margin-bottom:16px">
     <div class="card kpi"><div class="lbl">Pezzi medi / ordine</div><div class="val tnum">${r.avgPerOrder}</div></div>
     <div class="card kpi"><div class="lbl">Fornitore più attivo</div><div class="val" style="font-size:15px;font-weight:600" title="${esc(r.topSupplier)}">${esc(r.topSupplier)}</div></div>
     <div class="card kpi"><div class="lbl">Prodotto più ordinato</div><div class="val" style="font-size:15px;font-weight:600" title="${esc(r.topProduct)}">${esc(r.topProduct)}</div></div>

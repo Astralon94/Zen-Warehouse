@@ -21,9 +21,10 @@ function ensureSheet() {
   return { scrim: document.getElementById('scrim'), sheet: document.getElementById('sheet') };
 }
 
-export function openSheet(html, onMount) {
+export function openSheet(html, onMount, opts = {}) {
   const { scrim, sheet } = ensureSheet();
   sheet.innerHTML = html;
+  sheet.classList.toggle('wide', !!opts.wide); // foglio largo (builder multi-prodotto), resettato a ogni apertura
   scrim.classList.add('show'); sheet.classList.add('show');
   if (onMount) onMount(sheet);
   return sheet;

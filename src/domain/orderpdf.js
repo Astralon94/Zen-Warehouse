@@ -164,7 +164,8 @@ export function generateMovementSlip(locale, scheda, warehouses) {
   const dateStr = new Date(when).toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' });
   const isoDate = (scheda.date && /^\d{4}-\d{2}-\d{2}/.test(scheda.date)) ? scheda.date.slice(0, 10) : new Date(when).toISOString().slice(0, 10);
   const isTransfer = scheda.type === 'transfer';
-  const title = isTransfer ? 'SCHEDA DI TRASFERIMENTO' : 'SCHEDA DI PRELIEVO';
+  const isCarico = scheda.type === 'carico';
+  const title = isCarico ? 'SCHEDA DI CARICO' : isTransfer ? 'SCHEDA DI TRASFERIMENTO' : 'SCHEDA DI PRELIEVO';
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const ml = 18, mr = 192, pw = 210, pageH = 297;
@@ -184,8 +185,9 @@ export function generateMovementSlip(locale, scheda, warehouses) {
   doc.setDrawColor(229, 231, 235); doc.setLineWidth(0.4); doc.line(ml, y + 2, mr, y + 2); y += 11;
 
   // Box Da / A
-  const dest = isTransfer ? whName(scheda.toWh) : 'Fuori magazzino';
-  y = addRouteBox(doc, ml, mr, y, whName(scheda.fromWh), dest);
+  const from = isCarico ? 'Esterno / fornitore' : whName(scheda.fromWh);
+  const dest = isCarico ? whName(scheda.toWh) : isTransfer ? whName(scheda.toWh) : 'Fuori magazzino';
+  y = addRouteBox(doc, ml, mr, y, from, dest);
 
   // Intestazione tabella
   doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(107, 114, 128);
@@ -226,9 +228,9 @@ export function generateMovementSlip(locale, scheda, warehouses) {
   doc.text('Data', ml, signY); doc.line(ml + 12, signY, ml + 70, signY);
   doc.text('Firma', 118, signY); doc.line(130, signY, mr, signY);
 
-  const safeType = isTransfer ? 'trasferimento' : 'prelievo';
+  const safeType = isCarico ? 'carico' : isTransfer ? 'trasferimento' : 'prelievo';
   const filename = `scheda-${safeType}-${isoDate}.pdf`;
-  const label = (isTransfer ? 'Trasferimento' : 'Prelievo') + ` · ${whName(scheda.fromWh)} → ${dest}`;
+  const label = (isCarico ? 'Carico' : isTransfer ? 'Trasferimento' : 'Prelievo') + ` · ${from} → ${dest}`;
   return { supplierName: label, filename, blob: doc.output('blob'), righe: (scheda.lines || []).length, pezzi };
 }
 

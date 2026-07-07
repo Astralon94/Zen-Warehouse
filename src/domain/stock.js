@@ -62,16 +62,22 @@ export function movesForProduct(productId) {
   return data.stockMoves.filter(m => m.productId === productId).slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
 }
 
-// ---- Schede di movimento (DDT interno): trasferimenti/prelievi MULTI-prodotto ----
+// ---- Schede di movimento (DDT interno): carichi/prelievi/trasferimenti MULTI-prodotto ----
 // Una "scheda" è DERIVATA: raggruppa i movimenti che condividono un `batchId` nel loro doc.
 // Nessuna collezione/schema nuovo: i campi extra (`batchId`,`batchType`,`note`,`name`) vivono nel
-// doc dei movimenti. Trasferimento → move kind:'transfer' (fromWh−, toWh+); Prelievo → move kind:'out'.
-// `payload`: { type:'transfer'|'prelievo', fromWh, toWh, note, lines:[{productId, qty}] }.
+// doc dei movimenti. Carico → move kind:'in' (toWh+); Prelievo → move kind:'out' (fromWh−);
+// Trasferimento → move kind:'transfer' (fromWh−, toWh+).
+// `payload`: { type:'carico'|'prelievo'|'transfer', fromWh, toWh, note, lines:[{productId, qty}] }.
+//   carico: usa toWh (destinazione), origine esterna; prelievo: usa fromWh (origine), esce dal magazzino;
+//   transfer: usa fromWh (origine) e toWh (destinazione).
 // Ritorna la scheda { batchId, type, fromWh, toWh, note, date, ts, lines:[{productId,name,qty,format}] }.
 export function applyMovementBatch(localeId, { type, fromWh, toWh, note, lines }) {
   const isTransfer = type === 'transfer';
-  if (!fromWh) return null;
-  if (isTransfer && (!toWh || toWh === fromWh)) return null;
+  const isCarico = type === 'carico';
+  // validazione di origini/destinazioni secondo il tipo
+  if (isCarico) { if (!toWh) return null; }
+  else if (isTransfer) { if (!fromWh || !toWh || toWh === fromWh) return null; }
+  else if (!fromWh) return null; // prelievo
   const batchId = uid();
   const ts = Date.now();
   const date = todayStr();
@@ -80,8 +86,15 @@ export function applyMovementBatch(localeId, { type, fromWh, toWh, note, lines }
   (lines || []).forEach(ln => {
     const p = product(ln.productId); if (!p) return;
     const want = Math.floor(+ln.qty) || 0; if (want <= 0) return;
-    const eff = Math.min(want, cur(p, fromWh)); if (eff <= 0) return; // clamp al disponibile in origine
     const extra = { batchId, batchType: type, note, name: p.name };
+    if (isCarico) {
+      // carico: entrata merce da esterno, nessun clamp (la giacenza sale)
+      setWh(p, toWh, cur(p, toWh) + want);
+      addMove(localeId, p.id, toWh, want, 'in', note, null, extra);
+      out.push({ productId: p.id, name: p.name, format: p.format || '', qty: want });
+      return;
+    }
+    const eff = Math.min(want, cur(p, fromWh)); if (eff <= 0) return; // clamp al disponibile in origine
     if (isTransfer) {
       setWh(p, fromWh, cur(p, fromWh) - eff);
       setWh(p, toWh, cur(p, toWh) + eff);
@@ -94,7 +107,7 @@ export function applyMovementBatch(localeId, { type, fromWh, toWh, note, lines }
   });
   if (!out.length) return null;
   save();
-  return { batchId, type, fromWh, toWh: isTransfer ? toWh : null, note, date, ts, lines: out };
+  return { batchId, type, fromWh: isCarico ? null : fromWh, toWh: (isTransfer || isCarico) ? toWh : null, note, date, ts, lines: out };
 }
 
 // ricostruisce le schede del locale dai movimenti con `batchId`, dalla più recente
@@ -104,12 +117,13 @@ export function schede(localeId) {
     if (m.localeId !== localeId || !m.batchId) return;
     let s = byBatch.get(m.batchId);
     if (!s) {
-      const isTransfer = (m.batchType || (m.kind === 'transfer' ? 'transfer' : 'prelievo')) === 'transfer';
+      // tipo scheda: dal batchType salvato, con fallback dal kind del movimento
+      const bt = m.batchType || (m.kind === 'transfer' ? 'transfer' : m.kind === 'in' ? 'carico' : 'prelievo');
       s = {
         batchId: m.batchId,
-        type: isTransfer ? 'transfer' : 'prelievo',
-        fromWh: isTransfer ? m.fromWarehouseId : m.warehouseId,
-        toWh: isTransfer ? m.warehouseId : null,
+        type: bt,
+        fromWh: bt === 'transfer' ? m.fromWarehouseId : bt === 'carico' ? null : m.warehouseId,
+        toWh: (bt === 'transfer' || bt === 'carico') ? m.warehouseId : null,
         note: m.note || '',
         ts: m.ts || 0,
         date: m.date || '',
@@ -131,17 +145,27 @@ export function schedaById(localeId, batchId) {
 const supKey = ln => ln.supplierId || '__none__';
 // insieme dei gruppi-fornitore presenti in un ordine
 const supplierGroupsOf = order => [...new Set((order.lines || []).map(supKey))];
-// un ordine è "tutto ricevuto" quando ogni gruppo-fornitore è in receivedSuppliers
-function allSuppliersReceived(order) {
+// Ricalcola lo stato dell'ordine dopo una ricezione o uno scarto di una slice-fornitore.
+// L'ordine è "evaso" quando ogni gruppo-fornitore è ricevuto oppure scartato:
+//   tutti ricevuti (nessuno scartato) → 'received'; con almeno uno scartato → 'closed' (evaso).
+// Finché resta almeno una slice pendente lo stato non cambia (resta 'sent').
+function refreshOrderStatus(order) {
   const rec = order.receivedSuppliers || {};
-  return supplierGroupsOf(order).every(k => rec[k] != null);
+  const dis = order.dismissedSuppliers || {};
+  const groups = supplierGroupsOf(order);
+  const allClosed = groups.every(k => rec[k] != null || dis[k] != null);
+  if (!allClosed) return;
+  const anyDismissed = groups.some(k => dis[k] != null);
+  order.status = anyDismissed ? 'closed' : 'received';
+  if (order.status === 'received' && !order.receivedAt) order.receivedAt = Date.now();
+  order.closedAt = Date.now();
 }
 
 // Ricezione ordine INTERA (usata dallo Storico): carica in un magazzino tutte le righe di un
 // ordine (chiude il ciclo ordine→ricezione→scorte). Marca l'ordine come ricevuto per evitare
 // doppi carichi, e allinea lo stato per-fornitore (tutti i gruppi ricevuti).
 export function receiveOrder(order, whId) {
-  if (!order || order.status === 'received') return 0;
+  if (!order || order.status === 'received' || order.status === 'closed') return 0;
   if (!whId) return 0;
   let n = 0;
   const now = Date.now();
@@ -170,6 +194,7 @@ export function pendingReceipts(localeId) {
   const slices = [];
   orders.forEach(order => {
     const rec = order.receivedSuppliers || {};
+    const dis = order.dismissedSuppliers || {};
     // raggruppa le righe per fornitore mantenendo l'ordine di comparsa
     const groups = {}, keys = [];
     (order.lines || []).forEach(ln => {
@@ -178,7 +203,7 @@ export function pendingReceipts(localeId) {
       groups[k].push(ln);
     });
     keys.forEach(k => {
-      if (rec[k] != null) return; // gruppo-fornitore già ricevuto
+      if (rec[k] != null || dis[k] != null) return; // gruppo-fornitore già ricevuto o scartato
       const lines = groups[k].map(ln => ({ productId: ln.productId, name: ln.name, format: ln.format || '', qty: ln.qty, notes: ln.notes || '' }));
       const sName = k === '__none__' ? 'Senza fornitore' : (groups[k][0].supplierName || supplierName(k));
       slices.push({ order, supplierId: k, supplierName: sName, lines });
@@ -189,7 +214,7 @@ export function pendingReceipts(localeId) {
 
 // Ricezione rapida di UN fornitore di un ordine: carica in whId le righe di quel fornitore, usando
 // le quantità effettivamente arrivate da qtyById[productId] se presenti (altrimenti la qty ordinata).
-// Marca receivedSuppliers[supplierId]; se ora tutti i gruppi sono ricevuti → status:'received'.
+// Marca receivedSuppliers[supplierId] e ricalcola lo stato (chiude l'ordine se tutti i gruppi sono evasi).
 // Ritorna il numero di prodotti caricati.
 export function receiveOrderSupplier(order, supplierId, whId, qtyById) {
   if (!order || !whId) return 0;
@@ -206,9 +231,24 @@ export function receiveOrderSupplier(order, supplierId, whId, qtyById) {
     if (qty > 0) n++;
   });
   rec[supplierId] = now;
-  if (allSuppliersReceived(order)) { order.status = 'received'; order.receivedAt = now; }
+  refreshOrderStatus(order);
   save();
   return n;
+}
+
+// Scarta una slice-fornitore pendente: la marca come dismessa SENZA generare movimenti né toccare
+// le giacenze. La voce sparisce da "Carico da ordini". Se ora tutti i gruppi sono ricevuti o scartati
+// l'ordine si chiude ('received' se nessuno scartato, altrimenti 'closed' = evaso). Ritorna true se scartata.
+export function dismissReceiptSupplier(order, supplierId) {
+  if (!order) return false;
+  const rec = order.receivedSuppliers || {};
+  if (rec[supplierId] != null) return false; // già ricevuta: non si scarta
+  const dis = (order.dismissedSuppliers && typeof order.dismissedSuppliers === 'object' && !Array.isArray(order.dismissedSuppliers)) ? order.dismissedSuppliers : (order.dismissedSuppliers = {});
+  if (dis[supplierId] != null) return false; // già scartata
+  dis[supplierId] = Date.now();
+  refreshOrderStatus(order);
+  save();
+  return true;
 }
 
 // ---- Gestione magazzini (mutazioni annidate nel locale) ----

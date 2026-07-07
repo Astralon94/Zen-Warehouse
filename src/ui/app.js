@@ -12,7 +12,7 @@ import * as magazzino from './views/magazzino.js';
 import * as database from './views/database.js';
 import * as impostazioni from './views/impostazioni.js';
 
-// Fase 3 completa: Storico + Report + Magazzino (scorte).
+// Registro delle viste: Ordine · Dashboard · Storico · Report · Magazzino · Database · Impostazioni.
 const VIEWS = {
   ord: { mod: ordine, title: 'Ordine', icon: '🛒' },
   dash: { mod: dashboard, title: 'Dashboard', icon: '📊' },

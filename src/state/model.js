@@ -35,9 +35,10 @@ export const DEFAULT_DATA = () => {
     // prodotto: {id,localeId,name,typeId,supplierId,deliveryPointId,format,unit,notes,order,stockByWh:{whId:qty},minStock}
     // stockByWh = giacenza per magazzino; minStock = soglia globale sul TOTALE tra i magazzini.
     products: [],
-    // ordine inviato (STORICO): {id,localeId,createdAt,sentAt,status,note, lines:[{productId,name,qty,format,supplierId}], receivedSuppliers:{supplierId|__none__: ts}}
+    // ordine inviato (STORICO): {id,localeId,createdAt,sentAt,status,note, lines:[{productId,name,qty,format,supplierId}], receivedSuppliers:{...}, dismissedSuppliers:{...}}
     // receivedSuppliers = ricezione PER FORNITORE (la merce arriva da ciascun fornitore separatamente);
-    // quando tutti i gruppi-fornitore dell'ordine sono ricevuti → status:'received'.
+    // dismissedSuppliers = slice-fornitore SCARTATE (mai arrivate) — non generano carichi.
+    // status: 'sent' (in attesa) → 'received' (tutti i gruppi ricevuti) | 'closed' (evaso con almeno una slice scartata).
     orders: [],
     // movimento scorte: {id,localeId,productId,warehouseId,date,qty,kind:'in'|'out'|'transfer',note,orderId}
     // trasferimenti: kind:'transfer' con fromWarehouseId (origine) e warehouseId (destinazione)
@@ -122,6 +123,8 @@ export function migrate(d) {
     if (o.status == null) o.status = 'sent';
     // ricezione per-fornitore (retrocompatibile, nessun bump di versione)
     if (!o.receivedSuppliers || typeof o.receivedSuppliers !== 'object' || Array.isArray(o.receivedSuppliers)) o.receivedSuppliers = {};
+    // slice-fornitore SCARTATE dalla ricezione (additivo, retrocompatibile): non generano movimenti
+    if (!o.dismissedSuppliers || typeof o.dismissedSuppliers !== 'object' || Array.isArray(o.dismissedSuppliers)) o.dismissedSuppliers = {};
     // ordine già ricevuto "intero" (vecchia ricezione) → marca TUTTI i suoi gruppi-fornitore come ricevuti,
     // così non ricompare tra i pendenti.
     if (o.status === 'received') {

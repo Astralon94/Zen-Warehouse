@@ -31,27 +31,26 @@ export function render() {
     </div>`;
   }
 
+  // Azioni rapide verso le sezioni operative
+  h += `<div class="section-title">Azioni rapide</div>
+    <div class="btnrow">
+      <button class="btn primary" data-go="ord">🛒 Nuovo ordine</button>
+      <button class="btn" data-go="mag">🏬 Magazzino</button>
+      <button class="btn" data-go="db">📦 Database</button>
+      <button class="btn" data-go="rep">📈 Report</button>
+    </div>`;
+
   h += `<div class="section-title">Ultimi ordini</div>`;
   if (!recent.length) {
     h += `<div class="card empty">Nessun ordine ancora inviato.<br><span class="muted">Lo storico degli ordini comparirà qui.</span></div>`;
   } else {
-    h += `<div class="list">${recent.map(o => {
+    h += `<div class="list two">${recent.map(o => {
       const n = (o.lines || []).length;
       const d = o.sentAt ? new Date(o.sentAt).toLocaleDateString('it-IT') : '';
-      return `<div class="row"><div class="emoji">🧾</div>
+      return `<div class="row click" data-go="stor"><div class="emoji">🧾</div>
         <div class="mid"><div class="t1">${esc(o.note || 'Ordine')}</div><div class="t2">${d} · ${n} rig${n === 1 ? 'a' : 'he'}</div></div></div>`;
     }).join('')}</div>`;
   }
-
-  // Nota di stato (Fase 1): funzioni operative in arrivo
-  h += `<div class="card" style="margin-top:16px;background:var(--surface-soft)">
-    <b>Zen-Warehouse · Fase 1</b>
-    <div class="muted" style="font-size:12.5px;margin-top:6px;line-height:1.5">
-      Fondamenta pronte (server + database + salvataggio affidabile). In arrivo: <b>Database prodotti</b>
-      (categorie, fornitori, punti di consegna), <b>schermata Ordine</b> con generazione PDF per fornitore,
-      <b>Storico</b>, <b>Report</b> e <b>Scorte/magazzino</b>. Import/export ordini in Impostazioni.
-    </div>
-  </div>`;
 
   return h;
 }

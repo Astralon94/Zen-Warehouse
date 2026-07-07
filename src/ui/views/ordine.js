@@ -26,7 +26,7 @@ export function render() {
   // raggruppa nell'ordine di visualizzazione: categoria → diretti → sottocategorie → Altro
   const byType = {};
   prods.forEach(p => { const k = type(lid, p.typeId) ? p.typeId : '__none__'; (byType[k] = byType[k] || []).push(p); });
-  const rowsBlock = items => `<div class="list">${items.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(p => orderRow(lid, p)).join('')}</div>`;
+  const rowsBlock = items => `<div class="list two">${items.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(p => orderRow(lid, p)).join('')}</div>`;
 
   let body = '';
   topTypes(lid).forEach(c => {

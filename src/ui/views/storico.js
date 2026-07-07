@@ -46,7 +46,7 @@ export function render() {
 
   h += `<div class="card" style="display:flex;justify-content:space-between;margin-bottom:12px"><span><b>${list.length}</b> ordin${list.length === 1 ? 'e' : 'i'}</span></div>`;
 
-  h += `<div class="list">${list.map(o => {
+  h += `<div class="list two">${list.map(o => {
     const s = orderSummary(o);
     const dp = dpName(lid, o.deliveryPointId);
     return `<div class="row click" data-ord="${o.id}">
@@ -73,12 +73,12 @@ function openOrder(id) {
 
   openSheet(`
     <h2>Ordine del ${fmtDateTime(o.sentAt || o.createdAt).replace(' · ', ' alle ')}</h2>
-    <div class="sheetsub">${s.righe} righe · ${s.pezzi} pezzi · ${s.fornitori} fornitor${s.fornitori === 1 ? 'e' : 'i'}${dp ? ' · 📍 ' + esc(dp) : ''}${o.status === 'received' ? ' · <b style="color:var(--green,#6b8f80)">✓ ricevuto</b>' : ''}</div>
+    <div class="sheetsub">${s.righe} righe · ${s.pezzi} pezzi · ${s.fornitori} fornitor${s.fornitori === 1 ? 'e' : 'i'}${dp ? ' · 📍 ' + esc(dp) : ''}${o.status === 'received' ? ' · <b style="color:var(--green,#6b8f80)">✓ ricevuto</b>' : o.status === 'closed' ? ' · <b class="muted">evaso</b>' : ''}</div>
     ${groupsHtml}
     <div class="btnrow" style="margin-top:14px">
       <button class="btn primary" data-reprint>⤓ Rigenera PDF</button>
       <button class="btn" data-reorder>↻ Ri-ordina</button>
-      ${o.status === 'received' ? '' : '<button class="btn" data-receive>📥 Ricevi (carico)</button>'}
+      ${o.status === 'received' || o.status === 'closed' ? '' : '<button class="btn" data-receive>📥 Ricevi (carico)</button>'}
       <button class="btn danger" data-del>Elimina</button>
     </div>`,
     sheet => {
