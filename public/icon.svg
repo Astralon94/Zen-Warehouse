@@ -1,0 +1,16 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <rect x="92" y="92" width="840" height="840" rx="208" ry="208" fill="#4f7396"/>
+  <!-- casella compilata (turno assegnato) -->
+  <rect x="286" y="430" width="150" height="130" rx="14" fill="#ffffff" opacity="0.92"/>
+  <g fill="none" stroke="#ffffff" stroke-width="46" stroke-linecap="round" stroke-linejoin="round">
+    <!-- board / roster -->
+    <rect x="278" y="300" width="468" height="424" rx="52"/>
+    <!-- header divider -->
+    <line x1="278" y1="430" x2="746" y2="430"/>
+    <!-- colonne (ruoli) -->
+    <line x1="434" y1="430" x2="434" y2="724"/>
+    <line x1="590" y1="430" x2="590" y2="724"/>
+    <!-- righe (turni) -->
+    <line x1="278" y1="560" x2="746" y2="560"/>
+  </g>
+</svg>

@@ -1,0 +1,21 @@
+{
+  "name": "zen-warehouse-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zen-Warehouse (server) — versione profonda di Zen-Orders: Node http + node:sqlite, zero dipendenze. Ordini, storico, report, scorte.",
+  "scripts": {
+    "start": "node server.js",
+    "build": "vite build && cp dist/index.html public/index.html",
+    "dev": "vite",
+    "reset-db": "node scripts/reset.mjs",
+    "test:roundtrip": "node scripts/roundtrip.mjs"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10",
+    "vite-plugin-singlefile": "^2.0.3"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
