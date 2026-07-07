@@ -1,6 +1,6 @@
 // ============ Vista Impostazioni (Zen-Warehouse) ============
 import { data, save, setTheme, setData, reloadFromServer } from '../../state/store.js';
-import { esc, safeFileName } from '../../domain/util.js';
+import { esc, safeFileName, fmtDateFull } from '../../domain/util.js';
 import { openSheet, closeSheet, toast, confirmDialog, downloadText } from '../dom.js';
 import { newLocale } from '../../state/model.js';
 import { activeLocale } from '../../domain/warehouse.js';
@@ -34,9 +34,22 @@ export function render() {
     </div>
     <div class="muted" style="font-size:12px;margin-bottom:18px">L'export contiene l'intero database (locali, prodotti, fornitori, ordini, scorte). All'import puoi scegliere se <b>sostituire tutto</b> o <b>unire</b> i locali del backup a quelli attuali (con backup automatico lato server).</div>`;
 
+  // Aggiornamento software
+  h += `<div class="section-title">Aggiornamento software</div>
+    <div class="card">
+      <div class="muted" style="font-size:13px;margin-bottom:10px">Gli aggiornamenti vengono scaricati da <b>GitHub</b> e installati senza toccare i dati (la cartella <b>data/</b> non viene mai modificata). Il controllo è automatico all'avvio e ogni 12 ore; al termine dell'installazione il server si riavvia da solo.</div>
+      <div class="muted" id="upd_stato" style="font-size:13px;margin-bottom:10px">Versione installata: …</div>
+      <div class="btnrow">
+        <button class="btn" data-updcheck>Controlla ora</button>
+        <button class="btn" data-updinstall style="display:none">Installa e riavvia</button>
+      </div>
+    </div>`;
+
   // Zona pericolo
   h += `<div class="section-title">Zona pericolo</div>
     <div class="btnrow"><button class="btn danger" data-reset>Azzera database</button></div>`;
+
+  h += `<div class="muted" style="text-align:center;font-size:12px;margin-top:24px">Zen Warehouse · <span id="app_ver">v…</span> · server locale</div>`;
 
   return h;
 }
@@ -114,6 +127,50 @@ export function bind(root) {
     r.onerror = () => toast('Lettura file fallita');
     r.readAsText(f);
   };
+
+  // Aggiornamento software: stato, controllo manuale, installazione con riavvio
+  const updStato = root.querySelector('#upd_stato'), updVer = root.querySelector('#app_ver');
+  const updCheckBtn = root.querySelector('[data-updcheck]'), updInstBtn = root.querySelector('[data-updinstall]');
+  const showUpd = (s) => {
+    if (!updStato || !s) return;
+    if (updVer && s.corrente) updVer.textContent = 'v' + s.corrente;
+    let txt = `Versione installata: <b>v${esc(s.corrente || '?')}</b>`;
+    if (s.disponibile) txt += ` · disponibile <b>v${esc(s.ultima)}</b>${s.note ? ' — ' + esc(s.note) : ''}`;
+    else if (s.controllato_il) txt += ' · aggiornata (ultimo controllo: ' + fmtDateFull(s.controllato_il.slice(0, 10)) + ')';
+    else if (!s.url_configurato) txt += ' · aggiornamenti disattivati';
+    updStato.innerHTML = txt;
+    if (updInstBtn) updInstBtn.style.display = s.disponibile ? '' : 'none';
+  };
+  fetch('/api/updates').then(r => r.ok ? r.json() : null).then(showUpd).catch(() => {});
+  if (updCheckBtn) updCheckBtn.onclick = async () => {
+    updCheckBtn.disabled = true;
+    try {
+      const r = await fetch('/api/updates/check', { method: 'POST' });
+      const s = await r.json();
+      if (!r.ok) { toast(s.error || 'Controllo fallito'); return; }
+      showUpd(s);
+      toast(s.disponibile ? `Disponibile la versione ${s.ultima}` : 'Nessun aggiornamento disponibile');
+    } catch { toast('Controllo fallito (rete non disponibile?)'); }
+    finally { updCheckBtn.disabled = false; }
+  };
+  if (updInstBtn) updInstBtn.onclick = () => confirmDialog('Installare l\'aggiornamento?', 'Il nuovo software verrà scaricato e installato; il server si riavvia da solo e la pagina si ricarica. I dati non vengono toccati.', 'Installa', async () => {
+    updInstBtn.disabled = true;
+    try {
+      const r = await fetch('/api/updates/install', { method: 'POST' });
+      const s = await r.json();
+      if (!r.ok) { toast(s.error || 'Installazione fallita'); updInstBtn.disabled = false; return; }
+      toast(`Versione ${s.version} installata — riavvio in corso…`);
+      // attende che il server torni su, poi ricarica sul codice nuovo
+      const attesa = async () => {
+        for (let i = 0; i < 40; i++) {
+          await new Promise(ok => setTimeout(ok, 1500));
+          try { const hh = await fetch('/api/health'); if (hh.ok) { location.reload(); return; } } catch {}
+        }
+        toast('Il server non è ancora ripartito: ricarica la pagina a mano.');
+      };
+      attesa();
+    } catch { toast('Installazione fallita'); updInstBtn.disabled = false; }
+  });
 
   root.querySelector('[data-reset]').onclick = () => {
     confirmDialog('Azzerare il database?', 'Tutti i dati vengono cancellati e si riparte da un locale vuoto. Irreversibile (esporta prima un backup).', 'Azzera tutto', async () => {
