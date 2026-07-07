@@ -53,6 +53,7 @@ export function printDocument(title, bodyHtml) {
     *{box-sizing:border-box} body{font:13px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111;margin:24px}
     h1{font-size:18px;margin:0 0 2px} h2{font-size:14px;margin:18px 0 6px}
     .meta{color:#666;font-size:12px;margin-bottom:16px}
+    .notebox{background:#f4f1f8;border:1px solid #d9d0e6;border-left:3px solid #7a6a99;border-radius:6px;padding:8px 12px;margin:0 0 14px;font-size:12.5px;color:#3a3348;white-space:pre-wrap}
     table{width:100%;border-collapse:collapse;margin-bottom:10px} th,td{text-align:left;padding:6px 8px;border:1px solid #ddd;vertical-align:middle}
     th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#666}
     @media print{body{margin:0}}`;

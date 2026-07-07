@@ -32,7 +32,7 @@ export function render() {
       <button class="btn" data-import>⤒ Importa JSON</button>
       <input type="file" id="impFile" accept="application/json,.json" style="display:none">
     </div>
-    <div class="muted" style="font-size:12px;margin-bottom:18px">L'export contiene l'intero database (locali, prodotti, fornitori, ordini, scorte). L'import sostituisce tutto (con backup automatico lato server).</div>`;
+    <div class="muted" style="font-size:12px;margin-bottom:18px">L'export contiene l'intero database (locali, prodotti, fornitori, ordini, scorte). All'import puoi scegliere se <b>sostituire tutto</b> o <b>unire</b> i locali del backup a quelli attuali (con backup automatico lato server).</div>`;
 
   // Zona pericolo
   h += `<div class="section-title">Zona pericolo</div>
@@ -109,9 +109,7 @@ export function bind(root) {
       let obj;
       try { obj = JSON.parse(r.result); } catch (e) { toast('File JSON non valido'); return; }
       if (!obj || typeof obj !== 'object' || !Array.isArray(obj.locali)) { toast('Backup non valido (manca "locali")'); return; }
-      confirmDialog('Importare questo backup?', 'Sostituisce l\'intero database attuale (viene fatto un backup automatico).', 'Importa', () => {
-        setData(obj); toast('Backup importato ✓'); rerender(root);
-      }, { danger: true });
+      openImportSheet(obj, root);
     };
     r.onerror = () => toast('Lettura file fallita');
     r.readAsText(f);
@@ -123,6 +121,58 @@ export function bind(root) {
       await reloadFromServer(); toast('Database azzerato'); rerender(root);
     }, { danger: true });
   };
+}
+
+// Scelta Unisci / Sostituisci dopo aver validato il file di backup.
+function openImportSheet(obj, root) {
+  const nLoc = obj.locali.length;
+  const existing = new Set(data.locali.map(l => l.id));
+  const nuovi = obj.locali.filter(l => l && !existing.has(l.id));
+  openSheet(`
+    <h2>Importare questo backup?</h2>
+    <div class="sheetsub">Il backup contiene ${nLoc} local${nLoc === 1 ? 'e' : 'i'}. Scegli come importarlo (viene fatto un backup automatico lato server).</div>
+    <div class="list">
+      <div class="row click" data-merge><div class="emoji">➕</div>
+        <div class="mid"><div class="t1">Unisci ai dati attuali</div>
+          <div class="t2">${nuovi.length ? `Aggiunge ${nuovi.length} local${nuovi.length === 1 ? 'e' : 'i'} non presenti; i locali attuali restano intatti.` : 'Nessun locale nuovo da aggiungere.'}</div></div></div>
+      <div class="row click" data-replace><div class="emoji">♻️</div>
+        <div class="mid"><div class="t1">Sostituisci tutto</div>
+          <div class="t2">Rimpiazza l'intero database attuale con il backup.</div></div></div>
+    </div>
+    <div class="actions"><button class="btn" data-cancel>Annulla</button></div>`,
+    sheet => {
+      sheet.querySelector('[data-cancel]').onclick = closeSheet;
+      sheet.querySelector('[data-replace]').onclick = () => {
+        closeSheet(); setData(obj); toast('Backup importato ✓'); rerender(root);
+      };
+      sheet.querySelector('[data-merge]').onclick = () => {
+        closeSheet();
+        if (!nuovi.length) { toast('Nessun locale nuovo da unire'); return; }
+        mergeLocali(obj, nuovi);
+        toast(`Uniti ${nuovi.length} local${nuovi.length === 1 ? 'e' : 'i'} ✓`); rerender(root);
+      };
+    });
+}
+
+// Unione non distruttiva: aggiunge i locali nuovi (per id) e le loro entità collegate
+// (fornitori, prodotti, ordini, movimenti) senza toccare i locali già presenti.
+function mergeLocali(obj, nuovi) {
+  const newIds = new Set(nuovi.map(l => l.id));
+  const existingIds = new Set(data.locali.map(l => l.id));
+  const src = obj || {};
+  const collect = (key) => (Array.isArray(src[key]) ? src[key] : []).filter(r => r && newIds.has(r.localeId));
+  const merged = {
+    ...data,
+    locali: [...data.locali, ...nuovi],
+    suppliers: [...(data.suppliers || []), ...collect('suppliers')],
+    products: [...(data.products || []), ...collect('products')],
+    orders: [...(data.orders || []), ...collect('orders')],
+    stockMoves: [...(data.stockMoves || []), ...collect('stockMoves')],
+    settings: { ...data.settings },
+  };
+  // il locale attivo resta quello corrente se ancora valido
+  if (!existingIds.has(merged.settings.activeLocale)) merged.settings.activeLocale = merged.locali[0]?.id || null;
+  setData(merged);
 }
 
 function rerender(root) { root.innerHTML = render(); bind(root); }

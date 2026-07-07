@@ -50,6 +50,8 @@ export function defaultLocale(id, name) {
     types: [],
     // punti di consegna: {id,name,address,phone,note,order}
     deliveryPoints: [],
+    // note "permanenti" per fornitore: mappa { supplierId: nota } — stampate sul PDF di quel fornitore
+    supplierNotes: {},
     // ordine in corso: mappa { productId: quantità } — effimero finché non "inviato" (→ orders[])
     currentOrder: {}
   };
@@ -76,6 +78,7 @@ export function migrate(d) {
     if (l.order == null) l.order = i;
     if (!Array.isArray(l.types)) l.types = [];
     if (!Array.isArray(l.deliveryPoints)) l.deliveryPoints = [];
+    if (!l.supplierNotes || typeof l.supplierNotes !== 'object' || Array.isArray(l.supplierNotes)) l.supplierNotes = {};
     if (!l.currentOrder || typeof l.currentOrder !== 'object' || Array.isArray(l.currentOrder)) l.currentOrder = {};
     l.types.forEach((t, k) => { if (!t.id) t.id = uid(); if (t.parentId === undefined) t.parentId = null; if (t.order == null) t.order = k; });
     l.deliveryPoints.forEach((p, k) => { if (!p.id) p.id = uid(); if (p.order == null) p.order = k; });

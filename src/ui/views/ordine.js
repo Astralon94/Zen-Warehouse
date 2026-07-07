@@ -3,9 +3,9 @@ import { esc } from '../../domain/util.js';
 import { openSheet, closeSheet, toast, confirmDialog, printDocument } from '../dom.js';
 import {
   activeLocale, activeLocaleObj, productsOf, supplierName, orderQty,
-  topTypes, subTypes, type, deliveryPointsOf,
+  topTypes, subTypes, type, deliveryPointsOf, orderLines,
 } from '../../domain/warehouse.js';
-import { addQty, setQty, clearOrder, orderTotals, sendOrder } from '../../domain/orders.js';
+import { addQty, setQty, clearOrder, orderTotals, sendOrder, supplierNoteOf, setSupplierNote, clearSupplierNote } from '../../domain/orders.js';
 import { orderDocHtml } from '../../domain/orderpdf.js';
 import { go } from '../app.js';
 
@@ -42,13 +42,38 @@ export function render() {
 
   h += `<div style="padding-bottom:88px">${body}</div>`;
 
-  // barra fissa in basso
+  // barra fissa in basso: note per fornitore (se ci sono righe) + azioni
   const t = orderTotals(lid);
-  h += `<div id="orderbar" style="position:fixed;left:0;right:0;bottom:0;background:var(--card,var(--surface));border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom,0));z-index:20;display:flex;gap:10px;max-width:900px;margin:0 auto">
-    ${t.righe ? `<button class="btn" data-clear>Svuota</button>` : ''}
-    <button class="btn primary" style="flex:1" data-gen ${t.righe ? '' : 'disabled'}>${t.righe ? `📄 Genera PDF · ${t.righe} prodotti · ${t.pezzi} pz` : 'Inserisci le quantità'}</button>
+  h += `<div id="orderbar" style="position:fixed;left:0;right:0;bottom:0;background:var(--card,var(--surface));border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom,0));z-index:20;max-width:900px;margin:0 auto">
+    ${noteButtonsRow(lid)}
+    <div style="display:flex;gap:10px">
+      ${t.righe ? `<button class="btn" data-clear>Svuota</button>` : ''}
+      <button class="btn primary" style="flex:1" data-gen ${t.righe ? '' : 'disabled'}>${t.righe ? `📄 Genera PDF · ${t.righe} prodotti · ${t.pezzi} pz` : 'Inserisci le quantità'}</button>
+    </div>
   </div>`;
   return h;
+}
+
+// Fornitori con prodotti attivi nell'ordine in corso (chiave '__none__' = senza fornitore),
+// nell'ordine di prima apparizione delle righe.
+function activeSuppliers(lid) {
+  const seen = new Set(), out = [];
+  orderLines(lid).forEach(({ p }) => {
+    const key = p.supplierId || '__none__';
+    if (!seen.has(key)) { seen.add(key); out.push({ key, name: key === '__none__' ? 'Senza fornitore' : supplierName(p.supplierId) }); }
+  });
+  return out;
+}
+
+// Riga di pulsanti "Nota · <Fornitore>" sopra la barra Genera PDF (evidenziati se la nota è presente).
+function noteButtonsRow(lid) {
+  const sups = activeSuppliers(lid);
+  if (!sups.length) return `<div id="note-btns" style="margin-bottom:8px"></div>`;
+  const btns = sups.map(s => {
+    const has = supplierNoteOf(lid, s.key === '__none__' ? null : s.key).length > 0;
+    return `<button class="btn sm ${has ? 'primary' : ''}" data-note="${esc(s.key)}" style="border-radius:20px">${has ? '📝' : '✏️'} Nota · ${esc(s.name)}</button>`;
+  }).join('');
+  return `<div id="note-btns" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${btns}</div>`;
 }
 
 function orderRow(lid, p) {
@@ -90,21 +115,57 @@ export function bind(root) {
     gen.innerHTML = t.righe ? `📄 Genera PDF · ${t.righe} prodotti · ${t.pezzi} pz` : 'Inserisci le quantità';
     // mostra/nascondi "Svuota" senza rerender completo
     let clr = bar.querySelector('[data-clear]');
-    if (t.righe && !clr) { bar.insertAdjacentHTML('afterbegin', `<button class="btn" data-clear>Svuota</button>`); bindClear(); }
+    if (t.righe && !clr) { gen.parentElement.insertAdjacentHTML('afterbegin', `<button class="btn" data-clear>Svuota</button>`); bindClear(); }
     else if (!t.righe && clr) clr.remove();
+    // ricostruisci i pulsanti "Nota" (i fornitori attivi possono cambiare a ogni tap)
+    const notes = root.querySelector('#note-btns');
+    if (notes) { notes.outerHTML = noteButtonsRow(lid); bindNotes(); }
   };
   const bindClear = () => {
     root.querySelector('[data-clear]')?.addEventListener('click', () => {
       confirmDialog('Svuotare l\'ordine?', 'Tutte le quantità inserite verranno azzerate.', 'Svuota', () => { clearOrder(lid); rerender(); }, { danger: true });
     });
   };
+  const bindNotes = () => {
+    root.querySelectorAll('[data-note]').forEach(b => b.onclick = () => openNoteSheet(lid, b.dataset.note, updateBar));
+  };
 
   root.querySelectorAll('[data-minus]').forEach(b => b.onclick = () => { addQty(lid, b.dataset.minus, -1); updateRow(b.dataset.minus); });
   root.querySelectorAll('[data-plus]').forEach(b => b.onclick = () => { addQty(lid, b.dataset.plus, +1); updateRow(b.dataset.plus); });
   root.querySelectorAll('[data-qty]').forEach(inp => inp.onchange = () => { setQty(lid, inp.dataset.qty, inp.value); updateRow(inp.dataset.qty); });
   bindClear();
+  bindNotes();
 
   root.querySelector('[data-gen]')?.addEventListener('click', () => startGenerate(lid, rerender));
+}
+
+// Editor della nota "permanente" di un fornitore (chiave '__none__' = senza fornitore).
+// Salva/elimina la nota; poi aggiorna solo i pulsanti (niente re-render globale).
+function openNoteSheet(lid, key, refresh) {
+  const supplierId = key === '__none__' ? null : key;
+  const name = key === '__none__' ? 'Senza fornitore' : supplierName(supplierId);
+  const val = supplierNoteOf(lid, supplierId);
+  openSheet(`
+    <h2>📝 Nota · ${esc(name)}</h2>
+    <div class="sheetsub">Appare in evidenza sul PDF di questo fornitore. Resta salvata per i prossimi ordini.</div>
+    <div class="field"><textarea id="sn_txt" rows="5" style="resize:none;line-height:1.5" placeholder="Scrivi qui la nota per ${esc(name)}…">${esc(val)}</textarea></div>
+    <div class="actions">
+      <button class="btn" data-cancel>Annulla</button>
+      ${val ? `<button class="btn danger" data-del>🗑 Elimina</button>` : ''}
+      <button class="btn primary" data-ok>Salva nota</button>
+    </div>`,
+    sheet => {
+      sheet.querySelector('[data-cancel]').onclick = closeSheet;
+      sheet.querySelector('[data-del]')?.addEventListener('click', () => {
+        clearSupplierNote(lid, supplierId); closeSheet(); toast('Nota rimossa'); refresh();
+      });
+      sheet.querySelector('[data-ok]').onclick = () => {
+        const v = sheet.querySelector('#sn_txt').value;
+        setSupplierNote(lid, supplierId, v); closeSheet();
+        toast(v.trim() ? 'Nota salvata ✓' : 'Nota rimossa'); refresh();
+      };
+      setTimeout(() => { const f = sheet.querySelector('#sn_txt'); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } }, 120);
+    });
 }
 
 // Scelta punto di consegna (se presenti), poi genera.
