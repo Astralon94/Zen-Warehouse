@@ -83,6 +83,7 @@ export function sendOrder(localeId, { deliveryPointId = null, note = '' } = {}) 
   const order = {
     id: uid(), localeId, createdAt: now, sentAt: now, status: 'sent',
     deliveryPointId: deliveryPointId || null, note: note || '', supplierNotes, lines,
+    receivedSuppliers: {}, // ricezione per-fornitore (vuota alla creazione)
   };
   data.orders.push(order);
   const l = loc(localeId); if (l) l.currentOrder = {};

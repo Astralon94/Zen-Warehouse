@@ -9,6 +9,7 @@ import {
 import {
   stockIn, stockOut, setStock, transfer, movesForProduct,
   addWarehouse, renameWarehouse, deleteWarehouse, reorderWarehouses,
+  pendingReceipts, receiveOrderSupplier,
 } from '../../domain/stock.js';
 import { makeSortable } from '../sortable.js';
 
@@ -39,9 +40,14 @@ export function render() {
 
   // selettore magazzino + gestione
   const whChip = (v, lbl) => `<button class="chip ${scope === v ? 'on' : ''}" data-scope="${v}">${esc(lbl)}</button>`;
+  const nPend = pendingReceipts(lid).length;
+  const pendBadge = nPend > 0 ? `<span class="badge" style="margin-left:6px;background:var(--accent)">${nPend}</span>` : '';
   h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
     <div class="chips" style="margin:0">${whChip('all', 'Tutti i magazzini')}${whs.map(w => whChip(w.id, w.name)).join('')}</div>
-    <button class="btn sm" data-managewh>⚙︎ Gestisci magazzini</button>
+    <div style="display:flex;gap:6px;flex-shrink:0">
+      <button class="btn sm primary" data-receipts>📥 Carico da ordini${pendBadge}</button>
+      <button class="btn sm" data-managewh>⚙︎ Gestisci magazzini</button>
+    </div>
   </div>`;
 
   if (!all.length) return h + `<div class="card empty">Nessun prodotto.<br><span class="muted">Aggiungi prodotti dal Database per gestirne le scorte.</span></div>`;
@@ -254,10 +260,58 @@ function nameModal(lid, whId, after) {
     });
 }
 
+// ---- Ricezione rapida ordini, per fornitore ----
+// data ordine breve per l'intestazione della card
+function fmtOrderDate(o) {
+  return new Date(o.sentAt || o.createdAt).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+// sheet: elenco delle fette pendenti (una card per fornitore-ordine), con quantità modificabili
+function receiptsSheet(lid, after) {
+  const slices = pendingReceipts(lid);
+  const body = !slices.length
+    ? `<div class="card empty" style="padding:18px">Nessun ordine da ricevere.<br><span class="muted">Gli ordini inviati dalla schermata Ordine compaiono qui, divisi per fornitore.</span></div>`
+    : slices.map((sl, i) => {
+        const pezzi = sl.lines.reduce((a, ln) => a + ln.qty, 0);
+        const rows = sl.lines.map(ln => `<div class="row">
+          <div class="mid"><div class="t1">${esc(ln.name)}${ln.format ? ` <span class="badge soft" style="font-size:10px">${esc(ln.format)}</span>` : ''}</div>${ln.notes ? `<div class="t2">${esc(ln.notes)}</div>` : ''}</div>
+          <input class="rq" data-slice="${i}" data-prod="${esc(ln.productId)}" inputmode="numeric" value="${ln.qty}" style="width:64px;text-align:right;font-weight:800;flex-shrink:0" aria-label="Quantità arrivata">
+        </div>`).join('');
+        return `<div class="card" style="margin-bottom:12px" data-card="${i}">
+          <div class="section-title" style="margin-top:0">🚚 ${esc(sl.supplierName)} <span class="muted" style="font-weight:500;font-size:12px">· ${fmtOrderDate(sl.order)} · ${sl.lines.length} rig${sl.lines.length === 1 ? 'a' : 'he'} · ${pezzi} pz</span></div>
+          <div class="list">${rows}</div>
+          <div class="btnrow" style="margin-top:10px"><button class="btn primary" data-load="${i}">Carica</button></div>
+        </div>`;
+      }).join('');
+
+  openSheet(`
+    <h2>📥 Carico da ordini</h2>
+    <div class="sheetsub">Ricevi la merce per fornitore, modificando se serve le quantità effettivamente arrivate.</div>
+    <div data-receipts-body>${body}</div>
+    <div class="actions"><button class="btn primary" data-close>Chiudi</button></div>`,
+    sheet => {
+      const rebuild = () => { closeSheet(); receiptsSheet(lid, after); };
+      sheet.querySelector('[data-close]').onclick = () => { closeSheet(); after && after(); };
+      sheet.querySelectorAll('[data-load]').forEach(b => b.onclick = () => {
+        const i = +b.dataset.load;
+        const sl = slices[i]; if (!sl) return;
+        // raccogli le quantità (eventualmente modificate) di QUESTA card
+        const qtyById = {};
+        sheet.querySelectorAll(`.rq[data-slice="${i}"]`).forEach(inp => { qtyById[inp.dataset.prod] = parseInt(inp.value, 10) || 0; });
+        const doLoad = whId => {
+          const n = receiveOrderSupplier(sl.order, sl.supplierId, whId, qtyById);
+          toast(`${n} prodott${n === 1 ? 'o' : 'i'} caricat${n === 1 ? 'o' : 'i'} in ${warehouseName(lid, whId)} ✓`);
+          rebuild(); // la fetta ricevuta sparisce
+        };
+        withWarehouse(lid, 'Carico da ordine · scegli magazzino', doLoad);
+      });
+    });
+}
+
 export function bind(root) {
   const lid = activeLocale();
   const rerender = () => { root.innerHTML = render(); bind(root); };
   root.querySelectorAll('[data-scope]').forEach(b => b.onclick = () => { scope = b.dataset.scope; rerender(); });
+  root.querySelector('[data-receipts]')?.addEventListener('click', () => receiptsSheet(lid, rerender));
   root.querySelector('[data-managewh]')?.addEventListener('click', () => manageWarehouses(lid, rerender));
   root.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; rerender(); });
   const qi = root.querySelector('#mq');

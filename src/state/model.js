@@ -35,7 +35,9 @@ export const DEFAULT_DATA = () => {
     // prodotto: {id,localeId,name,typeId,supplierId,deliveryPointId,format,unit,notes,order,stockByWh:{whId:qty},minStock}
     // stockByWh = giacenza per magazzino; minStock = soglia globale sul TOTALE tra i magazzini.
     products: [],
-    // ordine inviato (STORICO): {id,localeId,createdAt,sentAt,status,note, lines:[{productId,name,qty,format,supplierId}]}
+    // ordine inviato (STORICO): {id,localeId,createdAt,sentAt,status,note, lines:[{productId,name,qty,format,supplierId}], receivedSuppliers:{supplierId|__none__: ts}}
+    // receivedSuppliers = ricezione PER FORNITORE (la merce arriva da ciascun fornitore separatamente);
+    // quando tutti i gruppi-fornitore dell'ordine sono ricevuti → status:'received'.
     orders: [],
     // movimento scorte: {id,localeId,productId,warehouseId,date,qty,kind:'in'|'out'|'transfer',note,orderId}
     // trasferimenti: kind:'transfer' con fromWarehouseId (origine) e warehouseId (destinazione)
@@ -114,7 +116,19 @@ export function migrate(d) {
   });
 
   d.orders = Array.isArray(d.orders) ? d.orders : [];
-  d.orders.forEach(o => { if (!o.id) o.id = uid(); if (!Array.isArray(o.lines)) o.lines = []; if (o.status == null) o.status = 'sent'; });
+  d.orders.forEach(o => {
+    if (!o.id) o.id = uid();
+    if (!Array.isArray(o.lines)) o.lines = [];
+    if (o.status == null) o.status = 'sent';
+    // ricezione per-fornitore (retrocompatibile, nessun bump di versione)
+    if (!o.receivedSuppliers || typeof o.receivedSuppliers !== 'object' || Array.isArray(o.receivedSuppliers)) o.receivedSuppliers = {};
+    // ordine già ricevuto "intero" (vecchia ricezione) → marca TUTTI i suoi gruppi-fornitore come ricevuti,
+    // così non ricompare tra i pendenti.
+    if (o.status === 'received') {
+      const ts = o.receivedAt || o.sentAt || o.createdAt || Date.now();
+      o.lines.forEach(ln => { const k = ln.supplierId || '__none__'; if (o.receivedSuppliers[k] == null) o.receivedSuppliers[k] = ts; });
+    }
+  });
 
   d.stockMoves = Array.isArray(d.stockMoves) ? d.stockMoves : [];
   d.stockMoves.forEach(m => { if (!m.id) m.id = uid(); });

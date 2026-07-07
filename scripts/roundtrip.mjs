@@ -43,6 +43,7 @@ const sample = {
     id: 'ord1', localeId: 'loc1', createdAt: 100, sentAt: 100, status: 'sent',
     deliveryPointId: 'dp1', note: 'urgente',
     supplierNotes: { 'sup1': 'Consegnare entro le 10' },
+    receivedSuppliers: { 'sup1': 1720000000000 }, // ricezione per-fornitore: sup1 già ricevuto, sup2/__none__ pendenti
     lines: [
       { productId: 'prod1', name: 'Barolo DOCG', qty: 6, format: 'Bt', supplierId: 'sup1', supplierName: 'Cantina Rossi', notes: 'annata 2019' },
       { productId: 'prod2', name: 'Pomodori', qty: 10, format: 'Kg', supplierId: 'sup2', supplierName: 'Ortofrutta Bio', notes: '' },
@@ -77,6 +78,7 @@ assert.deepEqual(out1.products.find(p => p.id === 'prod1').stockByWh, { wh1: 8, 
 assert.equal(out1.orders[0].lines.length, 3, 'lines[] dell\'ordine preservate');
 assert.equal(out1.orders[0].lines[0].supplierName, 'Cantina Rossi', 'snapshot supplierName nella riga preservato');
 assert.equal(out1.orders[0].supplierNotes.sup1, 'Consegnare entro le 10', 'snapshot supplierNotes dell\'ordine preservato');
+assert.deepEqual(out1.orders[0].receivedSuppliers, { 'sup1': 1720000000000 }, 'ricezione per-fornitore (receivedSuppliers) preservata');
 assert.equal(out1.stockMoves.length, 3, 'stockMoves preservati');
 assert.equal(out1.stockMoves.find(m => m.kind === 'transfer').fromWarehouseId, 'wh1', 'transfer con fromWarehouseId preservato');
 console.log('✓ entità annidate e collezioni verificate puntualmente (incl. warehouses e stockByWh)');
