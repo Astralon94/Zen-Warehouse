@@ -1,7 +1,7 @@
 // ============ Vista Magazzino/scorte (Zen-Warehouse) ============
 // Multi-magazzino: lo stesso prodotto ha scorte separate per magazzino fisico dentro il locale.
 import { esc } from '../../domain/util.js';
-import { openSheet, closeSheet, toast, confirmDialog } from '../dom.js';
+import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet } from '../dom.js';
 import {
   activeLocale, activeLocaleObj, productsOf, product, supplierName,
   warehousesOf, warehouse, warehouseName, stockOf, totalStock,
@@ -10,7 +10,9 @@ import {
   stockIn, stockOut, setStock, transfer, movesForProduct,
   addWarehouse, renameWarehouse, deleteWarehouse, reorderWarehouses,
   pendingReceipts, receiveOrderSupplier,
+  applyMovementBatch, schede, schedaById,
 } from '../../domain/stock.js';
+import { generateMovementSlip } from '../../domain/orderpdf.js';
 import { makeSortable } from '../sortable.js';
 
 let q = '';
@@ -44,8 +46,10 @@ export function render() {
   const pendBadge = nPend > 0 ? `<span class="badge" style="margin-left:6px;background:var(--accent)">${nPend}</span>` : '';
   h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
     <div class="chips" style="margin:0">${whChip('all', 'Tutti i magazzini')}${whs.map(w => whChip(w.id, w.name)).join('')}</div>
-    <div style="display:flex;gap:6px;flex-shrink:0">
+    <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap">
       <button class="btn sm primary" data-receipts>📥 Carico da ordini${pendBadge}</button>
+      <button class="btn sm" data-batch>↔ Trasferimento / prelievo</button>
+      <button class="btn sm" data-schede>🧾 Schede</button>
       <button class="btn sm" data-managewh>⚙︎ Gestisci magazzini</button>
     </div>
   </div>`;
@@ -307,11 +311,171 @@ function receiptsSheet(lid, after) {
     });
 }
 
+// ---- Schede di movimento: builder multi-prodotto (trasferimento / prelievo) ----
+// stato transitorio del builder (righe: {productId,qty})
+function batchSheet(lid, after) {
+  const whs = warehousesOf(lid);
+  if (!whs.length) { toast('Nessun magazzino'); return; }
+  let type = whs.length < 2 ? 'prelievo' : 'transfer';   // trasferimento richiede 2 magazzini
+  let fromWh = scope !== 'all' ? scope : whs[0].id;
+  let toWh = whs.find(w => w.id !== fromWh)?.id || null;
+  let bq = '';                                            // ricerca prodotti
+  const qty = {};                                         // productId -> quantità inserita
+
+  const render = () => {
+    const isTransfer = type === 'transfer';
+    // prodotti con giacenza nell'origine
+    let list = productsOf(lid).filter(p => stockOf(p, fromWh) > 0);
+    const term = bq.trim().toLowerCase();
+    if (term) list = list.filter(p => p.name.toLowerCase().includes(term));
+
+    const typeChip = (v, lbl, dis) => `<button class="chip ${type === v ? 'on' : ''}" data-btype="${v}" ${dis ? 'disabled' : ''}>${lbl}</button>`;
+    const fromOpts = whs.map(w => `<option value="${w.id}" ${w.id === fromWh ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+    const toOpts = whs.filter(w => w.id !== fromWh).map(w => `<option value="${w.id}" ${w.id === toWh ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+
+    const rows = list.length ? list.map(p => {
+      const avail = stockOf(p, fromWh);
+      return `<div class="row">
+        <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
+          <div class="t2 muted">disp. ${avail}</div></div>
+        <input class="bq" data-prod="${esc(p.id)}" inputmode="numeric" placeholder="0" value="${qty[p.id] ? esc(String(qty[p.id])) : ''}" style="width:64px;text-align:right;font-weight:800;flex-shrink:0" aria-label="Quantità">
+      </div>`;
+    }).join('') : `<div class="card empty" style="padding:14px">Nessun prodotto con giacenza in questo magazzino.</div>`;
+
+    // riepilogo
+    const nProd = Object.values(qty).filter(v => v > 0).length;
+    const pezzi = Object.values(qty).reduce((a, v) => a + (v > 0 ? v : 0), 0);
+
+    return `
+      <h2>↔ Trasferimento / prelievo</h2>
+      <div class="field"><label>Tipo</label>
+        <div class="chips" style="margin:0">${typeChip('transfer', 'Trasferimento', whs.length < 2)}${typeChip('prelievo', 'Prelievo (fuori magazzino)')}</div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Da</label><select id="b_from">${fromOpts}</select></div>
+        ${isTransfer ? `<div class="field"><label>A</label><select id="b_to">${toOpts}</select></div>` : `<div class="field"><label>A</label><input value="Fuori magazzino" disabled></div>`}
+      </div>
+      <div class="field"><input id="b_q" placeholder="Cerca prodotto…" value="${esc(bq)}"></div>
+      <div class="list" data-batchlist>${rows}</div>
+      <div class="field" style="margin-top:10px"><label>Nota (opzionale)</label><input id="b_note" placeholder="${isTransfer ? 'Es. riassortimento cella' : 'Es. uso interno, evento'}"></div>
+      <div class="sheetsub" style="margin-top:6px">${nProd} prodott${nProd === 1 ? 'o' : 'i'} · ${pezzi} pz</div>
+      <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Conferma</button></div>`;
+  };
+
+  // raccoglie le quantità correnti dagli input nel foglio in `qty`
+  const collect = sheet => sheet.querySelectorAll('.bq').forEach(inp => {
+    const v = parseInt(inp.value, 10) || 0;
+    if (v > 0) qty[inp.dataset.prod] = v; else delete qty[inp.dataset.prod];
+  });
+
+  let noteVal = '';   // nota preservata tra i ridisegni della modale
+
+  const wire = sheet => {
+    const noteEl = sheet.querySelector('#b_note');
+    if (noteEl) noteEl.value = noteVal;
+    // ridisegna la modale in-place preservando nota e quantità già inserite
+    const redraw = restore => { collect(sheet); if (noteEl) noteVal = noteEl.value; openSheet(render(), s => { wire(s); restore && restore(s); }); };
+
+    sheet.querySelectorAll('[data-btype]').forEach(b => b.onclick = () => {
+      if (b.disabled) return; type = b.dataset.btype; redraw();
+    });
+    sheet.querySelector('#b_from').onchange = e => {
+      fromWh = e.target.value;
+      if (toWh === fromWh) toWh = whs.find(w => w.id !== fromWh)?.id || null;
+      redraw();
+    };
+    sheet.querySelector('#b_to')?.addEventListener('change', e => { toWh = e.target.value; });
+    const qi = sheet.querySelector('#b_q');
+    if (qi) qi.oninput = () => {
+      bq = qi.value; const pos = qi.selectionStart;
+      redraw(s => { const nq = s.querySelector('#b_q'); if (nq) { nq.focus(); nq.setSelectionRange(pos, pos); } });
+    };
+    if (noteEl) noteEl.oninput = () => { noteVal = noteEl.value; };
+    sheet.querySelector('[data-cancel]').onclick = closeSheet;
+    sheet.querySelector('[data-ok]').onclick = () => {
+      collect(sheet);
+      if (noteEl) noteVal = noteEl.value;
+      const note = noteVal.trim();
+      const lines = Object.entries(qty).filter(([, v]) => v > 0).map(([productId, v]) => ({ productId, qty: v }));
+      if (!lines.length) { toast('Inserisci almeno una quantità'); return; }
+      if (type === 'transfer' && (!toWh || toWh === fromWh)) { toast('Scegli un magazzino di destinazione diverso'); return; }
+      const scheda = applyMovementBatch(lid, { type, fromWh, toWh, note, lines });
+      if (!scheda) { toast('Niente da spostare (giacenza insufficiente)'); return; }
+      closeSheet();
+      toast(type === 'transfer' ? 'Trasferimento registrato ✓' : 'Prelievo registrato ✓');
+      const l = activeLocaleObj();
+      const pdf = generateMovementSlip(l, scheda, warehousesOf(lid));
+      showPdfDownloadSheet([pdf]);
+      after && after();
+    };
+  };
+
+  openSheet(render(), wire);
+}
+
+// ---- Storico schede di movimento (consultazione + ristampa) ----
+function fmtSchedaDate(s) {
+  return s.ts ? new Date(s.ts).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' }) : (s.date || '');
+}
+function schedeSheet(lid, after) {
+  const list = schede(lid);
+  const body = !list.length
+    ? `<div class="card empty" style="padding:18px">Nessuna scheda.<br><span class="muted">Trasferimenti e prelievi multi-prodotto compaiono qui.</span></div>`
+    : `<div class="list">${list.map(s => {
+        const pezzi = s.lines.reduce((a, ln) => a + (ln.qty || 0), 0);
+        const route = s.type === 'transfer'
+          ? `${esc(warehouseName(lid, s.fromWh))} → ${esc(warehouseName(lid, s.toWh))}`
+          : `${esc(warehouseName(lid, s.fromWh))} → <span class="muted">fuori magazzino</span>`;
+        return `<div class="row click" data-scheda="${esc(s.batchId)}">
+          <div class="emoji">${s.type === 'transfer' ? '↔️' : '⬇️'}</div>
+          <div class="mid"><div class="t1">${s.type === 'transfer' ? 'Trasferimento' : 'Prelievo'} <span class="muted" style="font-weight:500;font-size:12px">· ${esc(fmtSchedaDate(s))}</span></div>
+            <div class="t2">${route} · ${s.lines.length} rig${s.lines.length === 1 ? 'a' : 'he'} · ${pezzi} pz</div></div>
+        </div>`;
+      }).join('')}</div>`;
+  openSheet(`
+    <h2>🧾 Schede di movimento</h2>
+    <div class="sheetsub">Trasferimenti e prelievi registrati, consultabili e ristampabili.</div>
+    ${body}
+    <div class="actions"><button class="btn primary" data-close>Chiudi</button></div>`,
+    sheet => {
+      sheet.querySelector('[data-close]').onclick = () => { closeSheet(); after && after(); };
+      sheet.querySelectorAll('[data-scheda]').forEach(el => el.onclick = () => schedaDetail(lid, el.dataset.scheda, () => schedeSheet(lid, after)));
+    });
+}
+function schedaDetail(lid, batchId, back) {
+  const s = schedaById(lid, batchId);
+  if (!s) { toast('Scheda non trovata'); back && back(); return; }
+  const isTransfer = s.type === 'transfer';
+  const dest = isTransfer ? warehouseName(lid, s.toWh) : 'Fuori magazzino';
+  const pezzi = s.lines.reduce((a, ln) => a + (ln.qty || 0), 0);
+  const rows = s.lines.map(ln => `<div class="row">
+    <div class="mid"><div class="t1">${esc(ln.name)}</div></div>
+    <div class="amt tnum" style="font-weight:800">${ln.qty}</div>
+  </div>`).join('');
+  openSheet(`
+    <h2>${isTransfer ? '↔️ Trasferimento' : '⬇️ Prelievo'}</h2>
+    <div class="sheetsub">${esc(fmtSchedaDate(s))} · ${esc(warehouseName(lid, s.fromWh))} → ${isTransfer ? esc(dest) : '<span class="muted">fuori magazzino</span>'}</div>
+    <div class="section-title">Prodotti <span class="muted" style="font-weight:500">· ${s.lines.length} rig${s.lines.length === 1 ? 'a' : 'he'} · ${pezzi} pz</span></div>
+    <div class="list">${rows}</div>
+    ${s.note ? `<div class="section-title">Nota</div><div class="card" style="padding:12px">${esc(s.note)}</div>` : ''}
+    <div class="actions"><button class="btn" data-back>Indietro</button><button class="btn primary" data-print>⤓ Ristampa scheda</button></div>`,
+    sheet => {
+      sheet.querySelector('[data-back]').onclick = () => { closeSheet(); back && back(); };
+      sheet.querySelector('[data-print]').onclick = () => {
+        const l = activeLocaleObj();
+        const pdf = generateMovementSlip(l, s, warehousesOf(lid));
+        showPdfDownloadSheet([pdf]);
+      };
+    });
+}
+
 export function bind(root) {
   const lid = activeLocale();
   const rerender = () => { root.innerHTML = render(); bind(root); };
   root.querySelectorAll('[data-scope]').forEach(b => b.onclick = () => { scope = b.dataset.scope; rerender(); });
   root.querySelector('[data-receipts]')?.addEventListener('click', () => receiptsSheet(lid, rerender));
+  root.querySelector('[data-batch]')?.addEventListener('click', () => batchSheet(lid, rerender));
+  root.querySelector('[data-schede]')?.addEventListener('click', () => schedeSheet(lid, rerender));
   root.querySelector('[data-managewh]')?.addEventListener('click', () => manageWarehouses(lid, rerender));
   root.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; rerender(); });
   const qi = root.querySelector('#mq');

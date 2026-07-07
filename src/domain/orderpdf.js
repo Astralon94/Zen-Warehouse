@@ -155,6 +155,99 @@ function addDeliveryBox(doc, ml, mr, y, dp) {
   return y + boxH + 6;
 }
 
+// ============ Scheda di movimento (DDT interno): trasferimento / prelievo multi-prodotto ============
+// Un SOLO jsPDF che accompagna la merce. `scheda` = { type, fromWh, toWh, note, ts, date, lines:[{name,qty,format}] }.
+// `warehouses` = elenco magazzini del locale (per risolvere i nomi). Ritorna { supplierName(=etichetta), filename, blob, righe, pezzi }.
+export function generateMovementSlip(locale, scheda, warehouses) {
+  const whName = id => (warehouses || []).find(w => w.id === id)?.name || '—';
+  const when = scheda.ts || Date.now();
+  const dateStr = new Date(when).toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' });
+  const isoDate = (scheda.date && /^\d{4}-\d{2}-\d{2}/.test(scheda.date)) ? scheda.date.slice(0, 10) : new Date(when).toISOString().slice(0, 10);
+  const isTransfer = scheda.type === 'transfer';
+  const title = isTransfer ? 'SCHEDA DI TRASFERIMENTO' : 'SCHEDA DI PRELIEVO';
+
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const ml = 18, mr = 192, pw = 210, pageH = 297;
+
+  // Testata: barra accento prugna con nome locale e data.
+  doc.setFillColor(0x7a, 0x6a, 0x99); doc.rect(0, 0, pw, 14, 'F');
+  doc.setFillColor(0xb3, 0x9a, 0xc9); doc.rect(pw / 2, 0, pw / 2, 14, 'F');
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
+  doc.text((locale?.name || 'MAGAZZINO').toUpperCase().slice(0, 45), ml, 9.5);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  doc.text(dateStr, mr, 9.5, { align: 'right' });
+
+  // Titolo
+  let y = 26;
+  doc.setTextColor(15, 23, 42); doc.setFontSize(19); doc.setFont('helvetica', 'bold');
+  doc.text(title, ml, y); y += 4;
+  doc.setDrawColor(229, 231, 235); doc.setLineWidth(0.4); doc.line(ml, y + 2, mr, y + 2); y += 11;
+
+  // Box Da / A
+  const dest = isTransfer ? whName(scheda.toWh) : 'Fuori magazzino';
+  y = addRouteBox(doc, ml, mr, y, whName(scheda.fromWh), dest);
+
+  // Intestazione tabella
+  doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(107, 114, 128);
+  doc.text('PRODOTTO', ml, y); doc.text('FORMATO', 145, y); doc.text('QTÀ', mr, y, { align: 'right' });
+  y += 3; doc.line(ml, y, mr, y); y += 5;
+  doc.setFont('helvetica', 'normal'); doc.setTextColor(15, 23, 42);
+
+  const maxY = pageH - 40;
+  (scheda.lines || []).forEach(it => {
+    doc.setFontSize(9.5); const lines = doc.splitTextToSize(it.name, 118);
+    doc.text(lines, ml, y); doc.setFontSize(9); doc.text(it.format || '—', 145, y);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(String(it.qty), mr, y, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    y += lines.length > 1 ? lines.length * 5 + 1 : 6.5;
+    doc.setDrawColor(245, 245, 245); doc.line(ml, y - 1.5, mr, y - 1.5); doc.setDrawColor(229, 231, 235);
+    if (y > maxY) { doc.addPage(); y = 20; }
+  });
+
+  // Totali
+  const pezzi = (scheda.lines || []).reduce((s, it) => s + (it.qty || 0), 0);
+  y += 4; doc.setDrawColor(200, 200, 200); doc.line(ml, y, mr, y); y += 5;
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42);
+  doc.text(`Totale righe: ${(scheda.lines || []).length}`, ml, y);
+  doc.text(`Totale pezzi: ${pezzi}`, mr, y, { align: 'right' });
+
+  // Nota
+  const note = (scheda.note || '').trim();
+  if (note) {
+    y += 10; doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(107, 114, 128);
+    doc.text('NOTA:', ml, y); y += 4; doc.setFont('helvetica', 'normal'); doc.setTextColor(15, 23, 42);
+    const ls = doc.splitTextToSize(note, mr - ml); doc.text(ls, ml, y); y += ls.length * 4.5;
+  }
+
+  // Riga data / firma in fondo
+  doc.setDrawColor(180, 180, 180); doc.setLineWidth(0.4);
+  const signY = pageH - 22;
+  doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(107, 114, 128);
+  doc.text('Data', ml, signY); doc.line(ml + 12, signY, ml + 70, signY);
+  doc.text('Firma', 118, signY); doc.line(130, signY, mr, signY);
+
+  const safeType = isTransfer ? 'trasferimento' : 'prelievo';
+  const filename = `scheda-${safeType}-${isoDate}.pdf`;
+  const label = (isTransfer ? 'Trasferimento' : 'Prelievo') + ` · ${whName(scheda.fromWh)} → ${dest}`;
+  return { supplierName: label, filename, blob: doc.output('blob'), righe: (scheda.lines || []).length, pezzi };
+}
+
+// Box "DA → A" per la scheda di movimento (prugna).
+function addRouteBox(doc, ml, mr, y, from, to) {
+  const innerW = mr - ml, boxH = 16;
+  doc.setFillColor(238, 234, 245); doc.setDrawColor(0x7a, 0x6a, 0x99); doc.setLineWidth(0.7);
+  doc.roundedRect(ml, y, innerW, boxH, 2.6, 2.6, 'FD');
+  doc.setFillColor(0x7a, 0x6a, 0x99);
+  doc.roundedRect(ml, y, 3, boxH, 1, 1, 'F');
+  const colW = innerW / 2;
+  doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(0x5a, 0x4d, 0x74);
+  doc.text('DA', ml + 7, y + 5.5); doc.text('A', ml + colW + 5, y + 5.5);
+  doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42);
+  doc.text(doc.splitTextToSize(from, colW - 12)[0] || '—', ml + 7, y + 11.5);
+  doc.text(doc.splitTextToSize(to, colW - 12)[0] || '—', ml + colW + 5, y + 11.5);
+  return y + boxH + 8;
+}
+
 // riepilogo compatto di un ordine (per liste/righe)
 export function orderSummary(order) {
   const lines = order.lines || [];

@@ -62,6 +62,71 @@ export function movesForProduct(productId) {
   return data.stockMoves.filter(m => m.productId === productId).slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
 }
 
+// ---- Schede di movimento (DDT interno): trasferimenti/prelievi MULTI-prodotto ----
+// Una "scheda" è DERIVATA: raggruppa i movimenti che condividono un `batchId` nel loro doc.
+// Nessuna collezione/schema nuovo: i campi extra (`batchId`,`batchType`,`note`,`name`) vivono nel
+// doc dei movimenti. Trasferimento → move kind:'transfer' (fromWh−, toWh+); Prelievo → move kind:'out'.
+// `payload`: { type:'transfer'|'prelievo', fromWh, toWh, note, lines:[{productId, qty}] }.
+// Ritorna la scheda { batchId, type, fromWh, toWh, note, date, ts, lines:[{productId,name,qty,format}] }.
+export function applyMovementBatch(localeId, { type, fromWh, toWh, note, lines }) {
+  const isTransfer = type === 'transfer';
+  if (!fromWh) return null;
+  if (isTransfer && (!toWh || toWh === fromWh)) return null;
+  const batchId = uid();
+  const ts = Date.now();
+  const date = todayStr();
+  note = (note || '').trim();
+  const out = [];
+  (lines || []).forEach(ln => {
+    const p = product(ln.productId); if (!p) return;
+    const want = Math.floor(+ln.qty) || 0; if (want <= 0) return;
+    const eff = Math.min(want, cur(p, fromWh)); if (eff <= 0) return; // clamp al disponibile in origine
+    const extra = { batchId, batchType: type, note, name: p.name };
+    if (isTransfer) {
+      setWh(p, fromWh, cur(p, fromWh) - eff);
+      setWh(p, toWh, cur(p, toWh) + eff);
+      addMove(localeId, p.id, toWh, eff, 'transfer', note, null, { ...extra, fromWarehouseId: fromWh });
+    } else {
+      setWh(p, fromWh, cur(p, fromWh) - eff);
+      addMove(localeId, p.id, fromWh, eff, 'out', note, null, extra);
+    }
+    out.push({ productId: p.id, name: p.name, format: p.format || '', qty: eff });
+  });
+  if (!out.length) return null;
+  save();
+  return { batchId, type, fromWh, toWh: isTransfer ? toWh : null, note, date, ts, lines: out };
+}
+
+// ricostruisce le schede del locale dai movimenti con `batchId`, dalla più recente
+export function schede(localeId) {
+  const byBatch = new Map();
+  data.stockMoves.forEach(m => {
+    if (m.localeId !== localeId || !m.batchId) return;
+    let s = byBatch.get(m.batchId);
+    if (!s) {
+      const isTransfer = (m.batchType || (m.kind === 'transfer' ? 'transfer' : 'prelievo')) === 'transfer';
+      s = {
+        batchId: m.batchId,
+        type: isTransfer ? 'transfer' : 'prelievo',
+        fromWh: isTransfer ? m.fromWarehouseId : m.warehouseId,
+        toWh: isTransfer ? m.warehouseId : null,
+        note: m.note || '',
+        ts: m.ts || 0,
+        date: m.date || '',
+        lines: [],
+      };
+      byBatch.set(m.batchId, s);
+    }
+    s.lines.push({ name: m.name || (product(m.productId)?.name) || '—', qty: m.qty || 0 });
+    if ((m.ts || 0) < s.ts) { s.ts = m.ts || 0; s.date = m.date || s.date; }
+  });
+  return [...byBatch.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+}
+
+export function schedaById(localeId, batchId) {
+  return schede(localeId).find(s => s.batchId === batchId) || null;
+}
+
 // chiave di raggruppamento per fornitore di una riga d'ordine ('__none__' se senza fornitore)
 const supKey = ln => ln.supplierId || '__none__';
 // insieme dei gruppi-fornitore presenti in un ordine
