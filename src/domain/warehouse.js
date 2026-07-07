@@ -18,6 +18,14 @@ export const subTypes = (localeId, parentId) => typesOf(localeId).filter(t => t.
 export const hasSubtypes = (localeId, id) => typesOf(localeId).some(t => t.parentId === id);
 export const deliveryPointsOf = localeId => (loc(localeId)?.deliveryPoints || []).slice().sort(byOrder);
 
+// magazzini fisici del locale (annidati nel doc), ordinati
+export const warehousesOf = localeId => (loc(localeId)?.warehouses || []).slice().sort(byOrder);
+export const warehouse = (localeId, whId) => warehousesOf(localeId).find(w => w.id === whId) || null;
+export const warehouseName = (localeId, whId) => warehouse(localeId, whId)?.name || '—';
+// giacenza di un prodotto in un magazzino / totale su tutti i magazzini
+export const stockOf = (product, whId) => (product?.stockByWh?.[whId] || 0);
+export const totalStock = product => Object.values(product?.stockByWh || {}).reduce((a, v) => a + (+v || 0), 0);
+
 const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.name || '').localeCompare(b.name || '');
 
 // ---- entità in scope (per locale) ----
@@ -40,9 +48,9 @@ export function counts(localeId) {
   };
 }
 
-// prodotti sotto la soglia minima di scorta (per gli avvisi magazzino)
+// prodotti sotto la soglia minima di scorta (per gli avvisi magazzino) — sul TOTALE tra i magazzini
 export function lowStock(localeId) {
-  return productsOf(localeId).filter(p => (p.minStock || 0) > 0 && (p.stock || 0) <= (p.minStock || 0));
+  return productsOf(localeId).filter(p => (p.minStock || 0) > 0 && totalStock(p) <= (p.minStock || 0));
 }
 
 // ---- ordine in corso ----

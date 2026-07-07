@@ -15,14 +15,14 @@
 const col = (n, type = 'TEXT', bool = false) => ({ n, type, bool });
 
 export const COLLECTIONS = [
-  // locale: {id,name,emoji,color,note,order, types:[{id,name,parentId,order}], deliveryPoints:[{id,name,address,phone,note,order}]}
+  // locale: {id,name,emoji,color,note,order, types:[{id,name,parentId,order}], warehouses:[{id,name,order}], deliveryPoints:[{id,name,address,phone,note,order}]}
   { key: 'locali', table: 'locali', cols: [col('name')] },
 
   // fornitore: {id,localeId,name,contact,phone,email,address,note,order}
   { key: 'suppliers', table: 'suppliers', index: ['localeId'],
     cols: [col('localeId'), col('name')] },
 
-  // prodotto: {id,localeId,name,typeId,supplierId,deliveryPointId,format,unit,notes,order, stock,minStock}
+  // prodotto: {id,localeId,name,typeId,supplierId,deliveryPointId,format,unit,notes,order, stockByWh:{whId:qty},minStock}
   { key: 'products', table: 'products', index: ['localeId', 'typeId', 'supplierId'],
     cols: [col('localeId'), col('typeId'), col('supplierId'), col('name')] },
 
@@ -30,7 +30,7 @@ export const COLLECTIONS = [
   { key: 'orders', table: 'orders', index: ['localeId', 'sentAt'],
     cols: [col('localeId'), col('sentAt', 'INTEGER'), col('status')] },
 
-  // movimento scorte (carico/scarico): {id,localeId,productId,date,qty,kind:'in'|'out',note,orderId?}
+  // movimento scorte: {id,localeId,productId,warehouseId,date,qty,kind:'in'|'out'|'transfer',fromWarehouseId?,note,orderId?}
   { key: 'stockMoves', table: 'stockMoves', index: ['localeId', 'productId', 'date'],
     cols: [col('localeId'), col('productId'), col('date'), col('kind')] },
 ];

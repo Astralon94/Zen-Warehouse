@@ -9,7 +9,7 @@
 
 import { uid } from '../domain/util.js';
 
-export const DATA_VERSION = 1;
+export const DATA_VERSION = 2;
 
 // Palette zen desaturata condivisa (per etichette categorie/locali).
 export const COLORS = [
@@ -32,11 +32,13 @@ export const DEFAULT_DATA = () => {
     locali: [loc],
     // fornitore: {id,localeId,name,contact,phone,email,address,note,order}
     suppliers: [],
-    // prodotto: {id,localeId,name,typeId,supplierId,deliveryPointId,format,unit,notes,order,stock,minStock}
+    // prodotto: {id,localeId,name,typeId,supplierId,deliveryPointId,format,unit,notes,order,stockByWh:{whId:qty},minStock}
+    // stockByWh = giacenza per magazzino; minStock = soglia globale sul TOTALE tra i magazzini.
     products: [],
     // ordine inviato (STORICO): {id,localeId,createdAt,sentAt,status,note, lines:[{productId,name,qty,format,supplierId}]}
     orders: [],
-    // movimento scorte: {id,localeId,productId,date,qty,kind:'in'|'out',note,orderId}
+    // movimento scorte: {id,localeId,productId,warehouseId,date,qty,kind:'in'|'out'|'transfer',note,orderId}
+    // trasferimenti: kind:'transfer' con fromWarehouseId (origine) e warehouseId (destinazione)
     stockMoves: []
   };
 };
@@ -48,6 +50,8 @@ export function defaultLocale(id, name) {
     id, name, emoji: '📦', color: '#7a6a99', note: '', order: 0,
     // categorie/tipologie: {id,name,parentId,order}  (parentId!=null → sottocategoria)
     types: [],
+    // magazzini fisici del locale: {id,name,order} — la giacenza dei prodotti è per magazzino
+    warehouses: [{ id: uid(), name: 'Magazzino principale', order: 0 }],
     // punti di consegna: {id,name,address,phone,note,order}
     deliveryPoints: [],
     // note "permanenti" per fornitore: mappa { supplierId: nota } — stampate sul PDF di quel fornitore
@@ -78,6 +82,9 @@ export function migrate(d) {
     if (l.order == null) l.order = i;
     if (!Array.isArray(l.types)) l.types = [];
     if (!Array.isArray(l.deliveryPoints)) l.deliveryPoints = [];
+    // magazzini: garantisci sempre almeno un magazzino (crealo se assente/vuoto)
+    if (!Array.isArray(l.warehouses) || !l.warehouses.length) l.warehouses = [{ id: uid(), name: 'Magazzino principale', order: 0 }];
+    l.warehouses.forEach((w, k) => { if (!w.id) w.id = uid(); if (!w.name) w.name = 'Magazzino'; if (w.order == null) w.order = k; });
     if (!l.supplierNotes || typeof l.supplierNotes !== 'object' || Array.isArray(l.supplierNotes)) l.supplierNotes = {};
     if (!l.currentOrder || typeof l.currentOrder !== 'object' || Array.isArray(l.currentOrder)) l.currentOrder = {};
     l.types.forEach((t, k) => { if (!t.id) t.id = uid(); if (t.parentId === undefined) t.parentId = null; if (t.order == null) t.order = k; });
@@ -87,14 +94,23 @@ export function migrate(d) {
   d.suppliers = Array.isArray(d.suppliers) ? d.suppliers : [];
   d.suppliers.forEach((s, i) => { if (!s.id) s.id = uid(); if (s.order == null) s.order = i; });
 
+  // mappa localeId → id del primo magazzino (per collocare la giacenza legacy)
+  const firstWhOf = {};
+  d.locali.forEach(l => { firstWhOf[l.id] = (l.warehouses.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0))[0] || {}).id || null; });
+
   d.products = Array.isArray(d.products) ? d.products : [];
   d.products.forEach((p, i) => {
     if (!p.id) p.id = uid();
     if (p.format == null) p.format = '';
     if (p.notes == null) p.notes = '';
     if (p.order == null) p.order = i;
-    if (p.stock == null) p.stock = 0;
     if (p.minStock == null) p.minStock = 0;
+    // scorte per magazzino: se manca, deriva dal vecchio product.stock nel primo magazzino del locale
+    if (!p.stockByWh || typeof p.stockByWh !== 'object' || Array.isArray(p.stockByWh)) {
+      const wh = firstWhOf[p.localeId];
+      p.stockByWh = wh ? { [wh]: (+p.stock || 0) } : {};
+    }
+    delete p.stock; // valore legacy: la giacenza vive ora in stockByWh
   });
 
   d.orders = Array.isArray(d.orders) ? d.orders : [];

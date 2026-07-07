@@ -21,7 +21,7 @@ function reorder(list, id, dir) {
 // ---- Prodotti ----
 export function addProduct(localeId, rec) {
   const order = data.products.filter(p => p.localeId === localeId).length;
-  const p = { id: uid(), localeId, name: '', format: '', typeId: null, supplierId: null, notes: '', order, stock: 0, minStock: 0, ...rec };
+  const p = { id: uid(), localeId, name: '', format: '', typeId: null, supplierId: null, notes: '', order, stockByWh: {}, minStock: 0, ...rec };
   data.products.push(p); save(); return p;
 }
 export function updateProduct(id, patch) {
@@ -37,7 +37,7 @@ export function deleteProduct(id) {
 export function duplicateProduct(id) {
   const src = data.products.find(x => x.id === id); if (!src) return;
   const order = data.products.filter(p => p.localeId === src.localeId).length;
-  const copy = { ...src, id: uid(), name: `${src.name} (copia)`, order };
+  const copy = { ...src, id: uid(), name: `${src.name} (copia)`, order, stockByWh: { ...(src.stockByWh || {}) } };
   data.products.push(copy); save(); return copy;
 }
 // riordino tra prodotti dello STESSO gruppo (stesso localeId + stessa categoria/tipologia)

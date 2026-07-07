@@ -5,7 +5,7 @@ import { FORMATS } from '../../state/model.js';
 import { openSheet, closeSheet, toast, confirmDialog } from '../dom.js';
 import {
   activeLocale, activeLocaleObj, productsOf, suppliersOf, supplierName,
-  topTypes, subTypes, hasSubtypes, type, deliveryPointsOf,
+  topTypes, subTypes, hasSubtypes, type, deliveryPointsOf, totalStock,
 } from '../../domain/warehouse.js';
 import {
   addProduct, updateProduct, deleteProduct, duplicateProduct, reorderProducts,
@@ -100,9 +100,10 @@ function prodottiBody(lid) {
 }
 
 function productRow(lid, p) {
-  const low = (p.minStock || 0) > 0 && (p.stock || 0) <= (p.minStock || 0);
-  const stockInfo = (p.minStock || 0) > 0 || (p.stock || 0) > 0
-    ? `<span style="font-size:11px;color:${low ? 'var(--red,#c2685f)' : 'var(--muted)'}">· scorta ${p.stock || 0}${p.minStock ? '/' + p.minStock : ''}${low ? ' ⚠️' : ''}</span>` : '';
+  const tot = totalStock(p);
+  const low = (p.minStock || 0) > 0 && tot <= (p.minStock || 0);
+  const stockInfo = (p.minStock || 0) > 0 || tot > 0
+    ? `<span style="font-size:11px;color:${low ? 'var(--red,#c2685f)' : 'var(--muted)'}">· scorta ${tot}${p.minStock ? '/' + p.minStock : ''}${low ? ' ⚠️' : ''}</span>` : '';
   return `<div class="row" data-sortid="${p.id}">
     ${HANDLE}
     <div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}</div>
@@ -137,10 +138,8 @@ function productModal(lid, id, prefill) {
     </div>
     <div id="p_subslot">${subcatField(lid, catId, subId)}</div>
     <div class="field"><label>Fornitore</label><select id="p_sup">${suppOpts}</select></div>
-    <div class="frow">
-      <div class="field"><label>Scorta attuale</label><input id="p_stock" inputmode="numeric" value="${p?.stock ?? ''}" placeholder="0"></div>
-      <div class="field"><label>Scorta minima</label><input id="p_min" inputmode="numeric" value="${p?.minStock ?? ''}" placeholder="0"></div>
-    </div>
+    <div class="field"><label>Soglia minima</label><input id="p_min" inputmode="numeric" value="${p?.minStock ?? ''}" placeholder="0">
+      <div class="muted" style="font-size:12px;margin-top:4px">Avviso sotto scorta sul totale tra i magazzini. La giacenza si gestisce in Magazzino.</div></div>
     <div class="field"><label>Note</label><input id="p_notes" value="${esc(p?.notes || '')}" placeholder="Note opzionali…"></div>
     <div class="actions">
       <button class="btn" data-cancel>Annulla</button>
@@ -159,7 +158,7 @@ function productModal(lid, id, prefill) {
         return {
           name, format: g('#p_fmt').value, typeId: subV || catV || null,
           supplierId: g('#p_sup').value || null, notes: g('#p_notes').value.trim(),
-          stock: parseInt(g('#p_stock').value, 10) || 0, minStock: parseInt(g('#p_min').value, 10) || 0,
+          minStock: parseInt(g('#p_min').value, 10) || 0,
         };
       };
       g('[data-cancel]').onclick = closeSheet;

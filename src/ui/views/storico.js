@@ -1,7 +1,7 @@
 // ============ Vista Storico ordini (Zen-Warehouse) ============
 import { esc } from '../../domain/util.js';
 import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet } from '../dom.js';
-import { activeLocale, activeLocaleObj, ordersOf, deliveryPointsOf, loc } from '../../domain/warehouse.js';
+import { activeLocale, activeLocaleObj, ordersOf, deliveryPointsOf, loc, warehousesOf } from '../../domain/warehouse.js';
 import { generateOrderPdfs, orderSummary } from '../../domain/orderpdf.js';
 import { deleteOrder, reorderFrom } from '../../domain/orders.js';
 import { receiveOrder } from '../../domain/stock.js';
@@ -83,9 +83,22 @@ function openOrder(id) {
     </div>`,
     sheet => {
       sheet.querySelector('[data-receive]')?.addEventListener('click', () => {
-        confirmDialog('Segnare l\'ordine come ricevuto?', 'Le quantità dell\'ordine vengono caricate nel magazzino (scorte).', 'Ricevi', () => {
-          const n = receiveOrder(o); closeSheet(); toast(n ? `${n} prodotti caricati in magazzino ✓` : 'Nessun carico');
-        });
+        const whs = warehousesOf(lid);
+        const doReceive = whId => { const n = receiveOrder(o, whId); closeSheet(); toast(n ? `${n} prodotti caricati in magazzino ✓` : 'Nessun carico'); };
+        if (whs.length === 1) {
+          confirmDialog('Segnare l\'ordine come ricevuto?', `Le quantità dell'ordine vengono caricate in "${esc(whs[0].name)}" (scorte).`, 'Ricevi', () => doReceive(whs[0].id));
+        } else {
+          const opts = whs.map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('');
+          openSheet(`
+            <h2>Ricevi ordine</h2>
+            <div class="sheetsub">Le quantità dell'ordine vengono caricate nel magazzino scelto (scorte).</div>
+            <div class="field"><label>Magazzino di destinazione</label><select id="r_wh">${opts}</select></div>
+            <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Ricevi</button></div>`,
+            s2 => {
+              s2.querySelector('[data-cancel]').onclick = closeSheet;
+              s2.querySelector('[data-ok]').onclick = () => doReceive(s2.querySelector('#r_wh').value);
+            });
+        }
       });
       sheet.querySelector('[data-reprint]').onclick = () => {
         const dpObj = o.deliveryPointId ? deliveryPointsOf(lid).find(d => d.id === o.deliveryPointId) : null;
