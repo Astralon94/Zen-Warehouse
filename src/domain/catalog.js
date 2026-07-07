@@ -29,7 +29,10 @@ export function updateProduct(id, patch) {
   Object.assign(p, patch); save();
 }
 export function deleteProduct(id) {
-  data.products = data.products.filter(x => x.id !== id); save();
+  const p = data.products.find(x => x.id === id);
+  data.products = data.products.filter(x => x.id !== id);
+  if (p) { const l = loc(p.localeId); if (l && l.currentOrder) delete l.currentOrder[id]; } // toglilo dall'ordine in corso
+  save();
 }
 export function duplicateProduct(id) {
   const src = data.products.find(x => x.id === id); if (!src) return;

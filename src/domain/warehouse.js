@@ -44,3 +44,25 @@ export function counts(localeId) {
 export function lowStock(localeId) {
   return productsOf(localeId).filter(p => (p.minStock || 0) > 0 && (p.stock || 0) <= (p.minStock || 0));
 }
+
+// ---- ordine in corso ----
+// Sequenza di visualizzazione della schermata Ordine (e dei PDF): categoria → prodotti diretti
+// → sottocategorie, tutto per campo .order; in coda i prodotti senza categoria valida.
+export function orderSequence(localeId) {
+  const byType = {};
+  productsOf(localeId).forEach(p => { const k = type(localeId, p.typeId) ? p.typeId : '__none__'; (byType[k] = byType[k] || []).push(p); });
+  const seq = [];
+  topTypes(localeId).forEach(c => {
+    (byType[c.id] || []).forEach(p => seq.push(p));
+    subTypes(localeId, c.id).forEach(s => (byType[s.id] || []).forEach(p => seq.push(p)));
+  });
+  (byType['__none__'] || []).forEach(p => seq.push(p));
+  return seq;
+}
+export const currentOrderOf = localeId => (loc(localeId)?.currentOrder || {});
+export const orderQty = (localeId, productId) => currentOrderOf(localeId)[productId] || 0;
+// righe attive (qty>0) nell'ordine di visualizzazione
+export function orderLines(localeId) {
+  const co = currentOrderOf(localeId);
+  return orderSequence(localeId).filter(p => (co[p.id] || 0) > 0).map(p => ({ p, qty: co[p.id] }));
+}

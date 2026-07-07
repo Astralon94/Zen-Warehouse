@@ -49,7 +49,9 @@ export function defaultLocale(id, name) {
     // categorie/tipologie: {id,name,parentId,order}  (parentId!=null → sottocategoria)
     types: [],
     // punti di consegna: {id,name,address,phone,note,order}
-    deliveryPoints: []
+    deliveryPoints: [],
+    // ordine in corso: mappa { productId: quantità } — effimero finché non "inviato" (→ orders[])
+    currentOrder: {}
   };
 }
 
@@ -74,6 +76,7 @@ export function migrate(d) {
     if (l.order == null) l.order = i;
     if (!Array.isArray(l.types)) l.types = [];
     if (!Array.isArray(l.deliveryPoints)) l.deliveryPoints = [];
+    if (!l.currentOrder || typeof l.currentOrder !== 'object' || Array.isArray(l.currentOrder)) l.currentOrder = {};
     l.types.forEach((t, k) => { if (!t.id) t.id = uid(); if (t.parentId === undefined) t.parentId = null; if (t.order == null) t.order = k; });
     l.deliveryPoints.forEach((p, k) => { if (!p.id) p.id = uid(); if (p.order == null) p.order = k; });
   });

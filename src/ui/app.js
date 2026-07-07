@@ -4,20 +4,22 @@ import { data, save, subscribe, onSaveStatus, saveStatus, reloadFromServer, forc
 import { openSheet, closeSheet, toast } from './dom.js';
 import { esc } from '../domain/util.js';
 
+import * as ordine from './views/ordine.js';
 import * as dashboard from './views/dashboard.js';
 import * as database from './views/database.js';
 import * as impostazioni from './views/impostazioni.js';
 
-// Fase 2: Database (prodotti, categorie, fornitori, consegne). Ordine + PDF, Storico,
-// Report e Scorte arrivano nei passi successivi.
+// Fase 2: Ordine (quantità → PDF per fornitore, con salvataggio nello storico) + Database.
+// Storico, Report e Scorte arrivano nei passi successivi.
 const VIEWS = {
+  ord: { mod: ordine, title: 'Ordine', icon: '🛒' },
   dash: { mod: dashboard, title: 'Dashboard', icon: '📊' },
   db: { mod: database, title: 'Database', icon: '📦' },
   set: { mod: impostazioni, title: 'Impostazioni', icon: '⚙' }
 };
-const ORDER = ['dash', 'db', 'set'];
+const ORDER = ['ord', 'dash', 'db', 'set'];
 
-let current = 'dash';
+let current = 'ord';
 let mql = window.matchMedia('(prefers-color-scheme: dark)');
 
 export function applyTheme() {
