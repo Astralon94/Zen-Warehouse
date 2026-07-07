@@ -17,5 +17,8 @@
   },
   "engines": {
     "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "jspdf": "^4.2.1"
   }
 }

@@ -1,12 +1,12 @@
 // ============ Vista Ordine: quantità per prodotto → PDF per fornitore + storico ============
 import { esc } from '../../domain/util.js';
-import { openSheet, closeSheet, toast, confirmDialog, printDocument } from '../dom.js';
+import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet } from '../dom.js';
 import {
   activeLocale, activeLocaleObj, productsOf, supplierName, orderQty,
   topTypes, subTypes, type, deliveryPointsOf, orderLines,
 } from '../../domain/warehouse.js';
 import { addQty, setQty, clearOrder, orderTotals, sendOrder, supplierNoteOf, setSupplierNote, clearSupplierNote } from '../../domain/orders.js';
-import { orderDocHtml } from '../../domain/orderpdf.js';
+import { generateOrderPdfs } from '../../domain/orderpdf.js';
 import { go } from '../app.js';
 
 const fmtBadge = f => f ? `<span class="badge soft" style="font-size:10px">${esc(f)}</span>` : '';
@@ -185,15 +185,15 @@ function startGenerate(lid, rerender) {
     });
 }
 
-// Invia l'ordine (→ storico), poi genera il documento PDF (una pagina per fornitore).
+// Invia l'ordine (→ storico), poi genera i PDF SEPARATI (uno per fornitore) e mostra la modale
+// di download: ogni file è pronto da inviare al rispettivo fornitore.
 function generate(lid, dpId, rerender) {
   const l = activeLocaleObj();
   const order = sendOrder(lid, { deliveryPointId: dpId });
   if (!order) { toast('Nessun prodotto nell\'ordine'); return; }
   const dp = dpId ? deliveryPointsOf(lid).find(d => d.id === dpId) : null;
   rerender();
-  toast('Ordine salvato nello storico ✓ — PDF pronto per la stampa');
-  // La stampa (window.print) blocca il thread: la ritardiamo così il salvataggio
-  // debounced dell'ordine viene confermato dal server PRIMA di aprire la finestra di stampa.
-  setTimeout(() => printDocument('Ordine', orderDocHtml(l, order, dp)), 400);
+  const pdfs = generateOrderPdfs(l, order, dp);
+  toast(pdfs.length === 1 ? 'Ordine salvato ✓ — 1 PDF pronto' : `Ordine salvato ✓ — ${pdfs.length} PDF pronti`);
+  showPdfDownloadSheet(pdfs, dp);
 }

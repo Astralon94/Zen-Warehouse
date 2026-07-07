@@ -82,6 +82,52 @@ export function downloadText(filename, text, mime = 'text/csv;charset=utf-8') {
   downloadBlob(filename, new Blob(['﻿' + text], { type: mime }));
 }
 
+// Modale di download dei PDF per fornitore (uno per fornitore). `pdfs` = [{supplierName,filename,blob,righe,pezzi}].
+// Per ciascuno: pulsante Scarica (object URL + download) e, se supportato, Condividi (Web Share API).
+// Gli object URL creati vengono revocati alla chiusura del foglio.
+export function showPdfDownloadSheet(pdfs, dp) {
+  const urls = pdfs.map(p => URL.createObjectURL(p.blob));
+  const canShare = (() => {
+    try { return !!(navigator.canShare && navigator.canShare({ files: [new File([new Blob(['x'])], 't.pdf', { type: 'application/pdf' })] })); }
+    catch { return false; }
+  })();
+
+  const rows = pdfs.map((p, i) => `
+    <div class="row" style="align-items:center">
+      <div class="emoji">📄</div>
+      <div class="mid"><div class="t1">${esc(p.supplierName)}</div>
+        <div class="t2">${p.righe} rig${p.righe === 1 ? 'a' : 'he'} · ${p.pezzi} pz</div></div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        ${canShare ? `<button class="btn sm" data-share="${i}">Condividi</button>` : ''}
+        <a class="btn sm primary" href="${urls[i]}" download="${esc(p.filename)}" data-dl="${i}" style="text-decoration:none">⤓ Scarica</a>
+      </div>
+    </div>`).join('');
+
+  const sheet = openSheet(`
+    <h2>📄 PDF pronti</h2>
+    <div class="sheetsub">${pdfs.length === 1 ? '1 PDF generato' : pdfs.length + ' PDF generati'} — un file per fornitore, pronto da inviare.${dp ? ' · 📍 ' + esc(dp.name) : ''}</div>
+    <div class="list">${rows}</div>
+    <div class="actions"><button class="btn" data-close-pdf>Chiudi</button></div>`,
+    s => {
+      s.querySelector('[data-close-pdf]').onclick = closeSheet;
+      s.querySelectorAll('[data-share]').forEach(b => b.onclick = async () => {
+        const p = pdfs[+b.dataset.share];
+        const file = new File([p.blob], p.filename, { type: 'application/pdf' });
+        try { if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: p.filename }); }
+        catch { /* annullato dall'utente: ok */ }
+      });
+    });
+
+  // revoca gli object URL quando il foglio si chiude (scrim/Esc/pulsante Chiudi)
+  const scrim = document.getElementById('scrim');
+  const revoke = () => { urls.forEach(u => URL.revokeObjectURL(u)); };
+  let done = false;
+  const watch = setInterval(() => {
+    if (!done && sheet && !sheet.classList.contains('show')) { done = true; clearInterval(watch); revoke(); }
+  }, 400);
+  scrim?.addEventListener('click', () => { if (!done) { done = true; clearInterval(watch); revoke(); } }, { once: true });
+}
+
 // chiude i menù a tendina aperti quando si clicca fuori
 document.addEventListener('click', e => {
   document.querySelectorAll('.navmenu.open').forEach(m => {

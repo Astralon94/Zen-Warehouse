@@ -1,8 +1,8 @@
 // ============ Vista Storico ordini (Zen-Warehouse) ============
 import { esc } from '../../domain/util.js';
-import { openSheet, closeSheet, toast, confirmDialog, printDocument } from '../dom.js';
+import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet } from '../dom.js';
 import { activeLocale, activeLocaleObj, ordersOf, deliveryPointsOf, loc } from '../../domain/warehouse.js';
-import { orderDocHtml, orderSummary } from '../../domain/orderpdf.js';
+import { generateOrderPdfs, orderSummary } from '../../domain/orderpdf.js';
 import { deleteOrder, reorderFrom } from '../../domain/orders.js';
 import { receiveOrder } from '../../domain/stock.js';
 import { go } from '../app.js';
@@ -76,7 +76,7 @@ function openOrder(id) {
     <div class="sheetsub">${s.righe} righe · ${s.pezzi} pezzi · ${s.fornitori} fornitor${s.fornitori === 1 ? 'e' : 'i'}${dp ? ' · 📍 ' + esc(dp) : ''}${o.status === 'received' ? ' · <b style="color:var(--green,#6b8f80)">✓ ricevuto</b>' : ''}</div>
     ${groupsHtml}
     <div class="btnrow" style="margin-top:14px">
-      <button class="btn primary" data-reprint>⤓ Ristampa PDF</button>
+      <button class="btn primary" data-reprint>⤓ Rigenera PDF</button>
       <button class="btn" data-reorder>↻ Ri-ordina</button>
       ${o.status === 'received' ? '' : '<button class="btn" data-receive>📥 Ricevi (carico)</button>'}
       <button class="btn danger" data-del>Elimina</button>
@@ -89,8 +89,9 @@ function openOrder(id) {
       });
       sheet.querySelector('[data-reprint]').onclick = () => {
         const dpObj = o.deliveryPointId ? deliveryPointsOf(lid).find(d => d.id === o.deliveryPointId) : null;
-        printDocument('Ordine', orderDocHtml(loc(lid), o, dpObj));
-        toast('PDF pronto per la stampa');
+        const pdfs = generateOrderPdfs(loc(lid), o, dpObj);
+        showPdfDownloadSheet(pdfs, dpObj);
+        toast(pdfs.length === 1 ? '1 PDF rigenerato ✓' : `${pdfs.length} PDF rigenerati ✓`);
       };
       sheet.querySelector('[data-reorder]').onclick = () => {
         confirmDialog('Ri-ordinare?', 'Le quantità di questo ordine vengono caricate nell\'ordine in corso (sovrascrive quello attuale).', 'Ri-ordina', () => {
