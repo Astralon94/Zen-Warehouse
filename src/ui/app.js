@@ -8,19 +8,21 @@ import * as ordine from './views/ordine.js';
 import * as dashboard from './views/dashboard.js';
 import * as storico from './views/storico.js';
 import * as report from './views/report.js';
+import * as magazzino from './views/magazzino.js';
 import * as database from './views/database.js';
 import * as impostazioni from './views/impostazioni.js';
 
-// Fase 3: Storico + Report ordini. Scorte/magazzino a seguire.
+// Fase 3 completa: Storico + Report + Magazzino (scorte).
 const VIEWS = {
   ord: { mod: ordine, title: 'Ordine', icon: '🛒' },
   dash: { mod: dashboard, title: 'Dashboard', icon: '📊' },
   stor: { mod: storico, title: 'Storico', icon: '🕘' },
   rep: { mod: report, title: 'Report', icon: '📈' },
+  mag: { mod: magazzino, title: 'Magazzino', icon: '🏬' },
   db: { mod: database, title: 'Database', icon: '📦' },
   set: { mod: impostazioni, title: 'Impostazioni', icon: '⚙' }
 };
-const ORDER = ['ord', 'dash', 'stor', 'rep', 'db', 'set'];
+const ORDER = ['ord', 'dash', 'stor', 'rep', 'mag', 'db', 'set'];
 
 let current = 'ord';
 let mql = window.matchMedia('(prefers-color-scheme: dark)');

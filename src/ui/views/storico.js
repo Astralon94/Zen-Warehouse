@@ -4,6 +4,7 @@ import { openSheet, closeSheet, toast, confirmDialog, printDocument } from '../d
 import { activeLocale, activeLocaleObj, ordersOf, deliveryPointsOf, loc } from '../../domain/warehouse.js';
 import { orderDocHtml, orderSummary } from '../../domain/orderpdf.js';
 import { deleteOrder, reorderFrom } from '../../domain/orders.js';
+import { receiveOrder } from '../../domain/stock.js';
 import { go } from '../app.js';
 
 let q = '';   // filtro testo (fornitore o prodotto)
@@ -72,14 +73,20 @@ function openOrder(id) {
 
   openSheet(`
     <h2>Ordine del ${fmtDateTime(o.sentAt || o.createdAt).replace(' · ', ' alle ')}</h2>
-    <div class="sheetsub">${s.righe} righe · ${s.pezzi} pezzi · ${s.fornitori} fornitor${s.fornitori === 1 ? 'e' : 'i'}${dp ? ' · 📍 ' + esc(dp) : ''}</div>
+    <div class="sheetsub">${s.righe} righe · ${s.pezzi} pezzi · ${s.fornitori} fornitor${s.fornitori === 1 ? 'e' : 'i'}${dp ? ' · 📍 ' + esc(dp) : ''}${o.status === 'received' ? ' · <b style="color:var(--green,#6b8f80)">✓ ricevuto</b>' : ''}</div>
     ${groupsHtml}
     <div class="btnrow" style="margin-top:14px">
       <button class="btn primary" data-reprint>⤓ Ristampa PDF</button>
       <button class="btn" data-reorder>↻ Ri-ordina</button>
+      ${o.status === 'received' ? '' : '<button class="btn" data-receive>📥 Ricevi (carico)</button>'}
       <button class="btn danger" data-del>Elimina</button>
     </div>`,
     sheet => {
+      sheet.querySelector('[data-receive]')?.addEventListener('click', () => {
+        confirmDialog('Segnare l\'ordine come ricevuto?', 'Le quantità dell\'ordine vengono caricate nel magazzino (scorte).', 'Ricevi', () => {
+          const n = receiveOrder(o); closeSheet(); toast(n ? `${n} prodotti caricati in magazzino ✓` : 'Nessun carico');
+        });
+      });
       sheet.querySelector('[data-reprint]').onclick = () => {
         const dpObj = o.deliveryPointId ? deliveryPointsOf(lid).find(d => d.id === o.deliveryPointId) : null;
         printDocument('Ordine', orderDocHtml(loc(lid), o, dpObj));
