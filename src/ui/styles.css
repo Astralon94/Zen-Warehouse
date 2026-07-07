@@ -267,3 +267,10 @@ table.matrix td.mcell:hover { box-shadow: inset 0 0 0 2px var(--accent); }
   .grid.k3 { grid-template-columns: repeat(2, 1fr); }
   .topbar .brand { display: none; }
 }
+
+/* Riordino via drag-drop */
+.drag-handle { cursor: grab; color: var(--faint); font-size: 15px; padding: 0 6px 0 2px; user-select: none; flex-shrink: 0; line-height: 1; }
+.drag-handle:active { cursor: grabbing; }
+.row[draggable="true"] { transition: opacity .12s; }
+.row.dragging { opacity: .45; }
+.list.sortprod .row, .list.sortsup .row, .list.sortdp .row { cursor: default; }

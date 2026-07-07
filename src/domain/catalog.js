@@ -47,6 +47,12 @@ export function moveProduct(id, dir) {
   if (reorder(group, id, dir)) save();
 }
 
+// riordino via drag-drop: assegna .order = posizione nella sequenza data (per gruppo/lista)
+export function reorderProducts(ids) {
+  ids.forEach((id, i) => { const p = data.products.find(x => x.id === id); if (p) p.order = i; });
+  save();
+}
+
 // ---- Categorie / tipologie (annidate nel locale) ----
 export function addType(localeId, rec) {
   const l = loc(localeId); if (!l) return;
@@ -93,6 +99,10 @@ export function moveSupplier(localeId, id, dir) {
   const group = data.suppliers.filter(s => s.localeId === localeId);
   if (reorder(group, id, dir)) save();
 }
+export function reorderSuppliers(ids) {
+  ids.forEach((id, i) => { const s = data.suppliers.find(x => x.id === id); if (s) s.order = i; });
+  save();
+}
 
 // ---- Punti di consegna (annidati nel locale) ----
 export function addDeliveryPoint(localeId, rec) {
@@ -113,4 +123,9 @@ export function deleteDeliveryPoint(localeId, id) {
 export function moveDeliveryPoint(localeId, id, dir) {
   const l = loc(localeId); if (!l) return;
   if (reorder(l.deliveryPoints, id, dir)) save();
+}
+export function reorderDeliveryPoints(localeId, ids) {
+  const l = loc(localeId); if (!l) return;
+  ids.forEach((id, i) => { const d = l.deliveryPoints.find(x => x.id === id); if (d) d.order = i; });
+  save();
 }

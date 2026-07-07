@@ -8,11 +8,14 @@ import {
   topTypes, subTypes, hasSubtypes, type, deliveryPointsOf,
 } from '../../domain/warehouse.js';
 import {
-  addProduct, updateProduct, deleteProduct, duplicateProduct, moveProduct,
+  addProduct, updateProduct, deleteProduct, duplicateProduct, reorderProducts,
   addType, updateType, deleteType, moveType,
-  addSupplier, updateSupplier, deleteSupplier, moveSupplier,
-  addDeliveryPoint, updateDeliveryPoint, deleteDeliveryPoint, moveDeliveryPoint,
+  addSupplier, updateSupplier, deleteSupplier, reorderSuppliers,
+  addDeliveryPoint, updateDeliveryPoint, deleteDeliveryPoint, reorderDeliveryPoints,
 } from '../../domain/catalog.js';
+import { makeSortable } from '../sortable.js';
+
+const HANDLE = '<span class="drag-handle" title="Trascina per riordinare" draggable="false">⋮⋮</span>';
 
 let tab = 'prodotti';        // prodotti | categorie | fornitori | consegne
 let q = '';                  // ricerca prodotti
@@ -74,7 +77,7 @@ function prodottiBody(lid) {
   const byType = {};
   list.forEach(p => { const k = type(lid, p.typeId) ? p.typeId : '__none__'; (byType[k] = byType[k] || []).push(p); });
 
-  const cardOf = items => `<div class="list">${items.slice().sort(byOrder).map(p => productRow(lid, p, items.length)).join('')}</div>`;
+  const cardOf = items => `<div class="list sortprod">${items.slice().sort(byOrder).map(p => productRow(lid, p)).join('')}</div>`;
   const section = (title, muted, items) => items.length ? `<div class="section-title" ${muted ? 'style="color:var(--muted)"' : ''}>${esc(title)}</div>${cardOf(items)}` : '';
 
   const out = [];
@@ -96,17 +99,15 @@ function prodottiBody(lid) {
   return h + (out.filter(Boolean).join('') || `<div class="card empty">Nessun prodotto in questa categoria.</div>`);
 }
 
-function productRow(lid, p, groupSize) {
-  const t = type(lid, p.typeId);
+function productRow(lid, p) {
   const low = (p.minStock || 0) > 0 && (p.stock || 0) <= (p.minStock || 0);
   const stockInfo = (p.minStock || 0) > 0 || (p.stock || 0) > 0
     ? `<span style="font-size:11px;color:${low ? 'var(--red,#c2685f)' : 'var(--muted)'}">· scorta ${p.stock || 0}${p.minStock ? '/' + p.minStock : ''}${low ? ' ⚠️' : ''}</span>` : '';
-  return `<div class="row">
+  return `<div class="row" data-sortid="${p.id}">
+    ${HANDLE}
     <div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}</div>
       <div class="t2">${esc(supplierName(p.supplierId))}${p.notes ? ' · ' + esc(p.notes) : ''} ${stockInfo}</div></div>
-    <div style="display:flex;gap:3px;flex-shrink:0">
-      <button class="btn sm" data-up="${p.id}" ${groupSize < 2 ? 'disabled' : ''}>↑</button>
-      <button class="btn sm" data-down="${p.id}" ${groupSize < 2 ? 'disabled' : ''}>↓</button>
+    <div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
       <button class="btn sm" data-dup="${p.id}">⎘</button>
       <button class="btn sm" data-edit="${p.id}">✏️</button>
       <button class="btn sm danger" data-del="${p.id}">🗑</button>
@@ -242,12 +243,10 @@ function fornitoriBody(lid) {
   const list = suppliersOf(lid);
   let h = `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addsup>+ Fornitore</button></div>`;
   if (!list.length) return h + `<div class="card empty">Nessun fornitore.</div>`;
-  h += `<div class="list">${list.map(s => `<div class="row">
-    <div class="emoji">🚚</div>
-    <div class="mid"><div class="t1">${esc(s.name)}</div><div class="t2">${[s.phone, s.email].filter(Boolean).map(esc).join(' · ')}${s.note ? ' · ' + esc(s.note) : ''}</div></div>
-    <div style="display:flex;gap:3px;flex-shrink:0">
-      <button class="btn sm" data-supup="${s.id}" ${list.length < 2 ? 'disabled' : ''}>↑</button>
-      <button class="btn sm" data-supdown="${s.id}" ${list.length < 2 ? 'disabled' : ''}>↓</button>
+  h += `<div class="list sortsup">${list.map(s => `<div class="row" data-sortid="${s.id}">
+    ${HANDLE}
+    <div class="mid"><div class="t1">🚚 ${esc(s.name)}</div><div class="t2">${[s.phone, s.email].filter(Boolean).map(esc).join(' · ')}${s.note ? ' · ' + esc(s.note) : ''}</div></div>
+    <div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
       <button class="btn sm" data-supedit="${s.id}">✏️</button>
       <button class="btn sm danger" data-supdel="${s.id}">🗑</button>
     </div></div>`).join('')}</div>`;
@@ -281,12 +280,10 @@ function consegneBody(lid) {
   const list = deliveryPointsOf(lid);
   let h = `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-adddp>+ Punto di consegna</button></div>`;
   if (!list.length) return h + `<div class="card empty">Nessun punto di consegna.</div>`;
-  h += `<div class="list">${list.map(d => `<div class="row">
-    <div class="emoji">📍</div>
-    <div class="mid"><div class="t1">${esc(d.name)}</div><div class="t2">${[d.address, d.contact, d.phone].filter(Boolean).map(esc).join(' · ')}${d.note ? ' · ' + esc(d.note) : ''}</div></div>
-    <div style="display:flex;gap:3px;flex-shrink:0">
-      <button class="btn sm" data-dpup="${d.id}" ${list.length < 2 ? 'disabled' : ''}>↑</button>
-      <button class="btn sm" data-dpdown="${d.id}" ${list.length < 2 ? 'disabled' : ''}>↓</button>
+  h += `<div class="list sortdp">${list.map(d => `<div class="row" data-sortid="${d.id}">
+    ${HANDLE}
+    <div class="mid"><div class="t1">📍 ${esc(d.name)}</div><div class="t2">${[d.address, d.contact, d.phone].filter(Boolean).map(esc).join(' · ')}${d.note ? ' · ' + esc(d.note) : ''}</div></div>
+    <div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
       <button class="btn sm" data-dpedit="${d.id}">✏️</button>
       <button class="btn sm danger" data-dpdel="${d.id}">🗑</button>
     </div></div>`).join('')}</div>`;
@@ -330,8 +327,7 @@ export function bind(root) {
   root.querySelector('[data-addprod]')?.addEventListener('click', () => productModal(lid, null, null));
   root.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => productModal(lid, b.dataset.edit, null));
   root.querySelectorAll('[data-dup]').forEach(b => b.onclick = () => { duplicateProduct(b.dataset.dup); toast('Duplicato ✓'); rerender(); });
-  root.querySelectorAll('[data-up]').forEach(b => b.onclick = () => { moveProduct(b.dataset.up, -1); rerender(); });
-  root.querySelectorAll('[data-down]').forEach(b => b.onclick = () => { moveProduct(b.dataset.down, 1); rerender(); });
+  root.querySelectorAll('.sortprod').forEach(el => makeSortable(el, ids => reorderProducts(ids)));
   root.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const p = data.products.find(x => x.id === b.dataset.del);
     confirmDialog('Eliminare il prodotto?', p?.name || '', 'Elimina', () => { deleteProduct(b.dataset.del); toast('Prodotto eliminato'); rerender(); }, { danger: true });
@@ -351,8 +347,7 @@ export function bind(root) {
   // Fornitori
   root.querySelector('[data-addsup]')?.addEventListener('click', () => supplierModal(lid, null));
   root.querySelectorAll('[data-supedit]').forEach(b => b.onclick = () => supplierModal(lid, b.dataset.supedit));
-  root.querySelectorAll('[data-supup]').forEach(b => b.onclick = () => { moveSupplier(lid, b.dataset.supup, -1); rerender(); });
-  root.querySelectorAll('[data-supdown]').forEach(b => b.onclick = () => { moveSupplier(lid, b.dataset.supdown, 1); rerender(); });
+  root.querySelectorAll('.sortsup').forEach(el => makeSortable(el, ids => reorderSuppliers(ids)));
   root.querySelectorAll('[data-supdel]').forEach(b => b.onclick = () => {
     const s = data.suppliers.find(x => x.id === b.dataset.supdel);
     confirmDialog('Eliminare il fornitore?', `${s?.name || ''} — i prodotti collegati restano senza fornitore.`, 'Elimina', () => { deleteSupplier(b.dataset.supdel); toast('Fornitore eliminato'); rerender(); }, { danger: true });
@@ -361,8 +356,7 @@ export function bind(root) {
   // Consegne
   root.querySelector('[data-adddp]')?.addEventListener('click', () => deliveryPointModal(lid, null));
   root.querySelectorAll('[data-dpedit]').forEach(b => b.onclick = () => deliveryPointModal(lid, b.dataset.dpedit));
-  root.querySelectorAll('[data-dpup]').forEach(b => b.onclick = () => { moveDeliveryPoint(lid, b.dataset.dpup, -1); rerender(); });
-  root.querySelectorAll('[data-dpdown]').forEach(b => b.onclick = () => { moveDeliveryPoint(lid, b.dataset.dpdown, 1); rerender(); });
+  root.querySelectorAll('.sortdp').forEach(el => makeSortable(el, ids => reorderDeliveryPoints(lid, ids)));
   root.querySelectorAll('[data-dpdel]').forEach(b => b.onclick = () => {
     const d = deliveryPointsOf(lid).find(x => x.id === b.dataset.dpdel);
     confirmDialog('Eliminare il punto di consegna?', d?.name || '', 'Elimina', () => { deleteDeliveryPoint(lid, b.dataset.dpdel); toast('Punto eliminato'); rerender(); }, { danger: true });
