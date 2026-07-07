@@ -5,15 +5,17 @@ import { openSheet, closeSheet, toast } from './dom.js';
 import { esc } from '../domain/util.js';
 
 import * as dashboard from './views/dashboard.js';
+import * as database from './views/database.js';
 import * as impostazioni from './views/impostazioni.js';
 
-// Fase 1: dashboard + impostazioni. Le viste operative (Ordine, Database prodotti,
-// Fornitori, Storico, Report, Scorte) arrivano nelle fasi successive.
+// Fase 2: Database (prodotti, categorie, fornitori, consegne). Ordine + PDF, Storico,
+// Report e Scorte arrivano nei passi successivi.
 const VIEWS = {
   dash: { mod: dashboard, title: 'Dashboard', icon: '📊' },
+  db: { mod: database, title: 'Database', icon: '📦' },
   set: { mod: impostazioni, title: 'Impostazioni', icon: '⚙' }
 };
-const ORDER = ['dash', 'set'];
+const ORDER = ['dash', 'db', 'set'];
 
 let current = 'dash';
 let mql = window.matchMedia('(prefers-color-scheme: dark)');
