@@ -21,8 +21,8 @@ const sample = {
       { id: 'ty-food', name: 'Cucina', parentId: null, order: 2 },
     ],
     warehouses: [
-      { id: 'wh1', name: 'Magazzino principale', order: 0 },
-      { id: 'wh2', name: 'Cella frigo', order: 1 },
+      { id: 'wh1', name: 'Magazzino principale', order: 0, typeIds: [] },        // nessun limite = tutte le categorie
+      { id: 'wh2', name: 'Cella frigo', order: 1, typeIds: ['ty-food'] },         // solo la categoria "Cucina"
     ],
     deliveryPoints: [
       { id: 'dp1', name: 'Magazzino Retro', address: 'Via Roma 1', phone: '011-123', note: 'suonare due volte', order: 0 },
@@ -72,6 +72,7 @@ assert.equal(l.types.length, 3, 'types annidati preservati');
 assert.equal(l.types.find(t => t.id === 'ty-vin').parentId, 'ty-bev', 'sottocategoria (parentId) preservata');
 assert.equal(l.warehouses.length, 2, 'warehouses annidati preservati');
 assert.equal(l.warehouses.find(w => w.id === 'wh2').name, 'Cella frigo', 'nome magazzino preservato');
+assert.deepEqual(l.warehouses.find(w => w.id === 'wh2').typeIds, ['ty-food'], 'categorie ammesse del magazzino (typeIds) preservate');
 assert.equal(l.deliveryPoints[0].address, 'Via Roma 1', 'deliveryPoint annidato preservato');
 assert.equal(l.supplierNotes.sup1, 'Consegnare entro le 10', 'supplierNotes annidate preservate');
 assert.equal(l.currentOrder.prod2, 3, 'currentOrder annidato preservato');

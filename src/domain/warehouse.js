@@ -26,6 +26,28 @@ export const warehouseName = (localeId, whId) => warehouse(localeId, whId)?.name
 export const stockOf = (product, whId) => (product?.stockByWh?.[whId] || 0);
 export const totalStock = product => Object.values(product?.stockByWh || {}).reduce((a, v) => a + (+v || 0), 0);
 
+// ---- categorie ammesse per magazzino ----
+// categoria di primo livello a cui appartiene un type (risale il parentId); null se type assente/non valido
+export function topCategoryId(localeId, typeId) {
+  const t = type(localeId, typeId);
+  return t ? (t.parentId || t.id) : null;
+}
+// un magazzino AMMETTE un prodotto se non ha restrizioni (typeIds vuoto) o la sua categoria-top è tra le ammesse
+export function warehouseAllowsProduct(localeId, whId, product) {
+  const w = warehouse(localeId, whId);
+  const ids = (w && Array.isArray(w.typeIds)) ? w.typeIds : [];
+  if (!ids.length) return true; // nessuna restrizione = tutte le categorie
+  const cat = topCategoryId(localeId, product?.typeId);
+  return cat != null && ids.includes(cat);
+}
+// magazzini "sensati" come destinazione per un prodotto: quelli che ne ammettono la categoria
+// OPPURE che ne detengono già giacenza. Guida MORBIDA: mai lista vuota (fallback a tutti).
+export function compatibleWarehouses(localeId, product) {
+  const all = warehousesOf(localeId);
+  const ok = all.filter(w => warehouseAllowsProduct(localeId, w.id, product) || (product?.stockByWh?.[w.id] || 0) > 0);
+  return ok.length ? ok : all;
+}
+
 const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.name || '').localeCompare(b.name || '');
 
 // ---- entità in scope (per locale) ----

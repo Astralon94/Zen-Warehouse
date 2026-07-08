@@ -5,10 +5,11 @@ import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet } fro
 import {
   activeLocale, activeLocaleObj, productsOf, product, supplierName,
   warehousesOf, warehouse, warehouseName, stockOf, totalStock,
+  topTypes, typeName, warehouseAllowsProduct, compatibleWarehouses,
 } from '../../domain/warehouse.js';
 import {
   stockIn, stockOut, setStock, transfer, movesForProduct,
-  addWarehouse, renameWarehouse, deleteWarehouse, reorderWarehouses,
+  addWarehouse, renameWarehouse, deleteWarehouse, reorderWarehouses, setWarehouseTypes,
   pendingReceipts, receiveOrderSupplier, dismissReceiptSupplier,
   applyMovementBatch, schede, schedaById,
 } from '../../domain/stock.js';
@@ -56,13 +57,25 @@ export function render() {
 
   if (!all.length) return h + `<div class="card empty">Nessun prodotto.<br><span class="muted">Aggiungi prodotti dal Database per gestirne le scorte.</span></div>`;
 
-  const nLow = all.filter(p => status(p) === 'low').length;
-  const nOut = all.filter(p => status(p) === 'out').length;
+  // scope su un magazzino con categorie ammesse: mostra solo quelle categorie, MA i prodotti con
+  // giacenza in quel magazzino restano sempre visibili (salvaguardia: non nascondere merce reale).
+  const wh = scope !== 'all' ? warehouse(lid, scope) : null;
+  const restricted = !!(wh && Array.isArray(wh.typeIds) && wh.typeIds.length);
+  const outOfCat = p => restricted && !warehouseAllowsProduct(lid, scope, p);      // fuori categoria per questo magazzino
+  const inScope = p => !restricted || warehouseAllowsProduct(lid, scope, p) || stockOf(p, scope) > 0;
+  const base = restricted ? all.filter(inScope) : all;
+
+  const nLow = base.filter(p => status(p) === 'low').length;
+  const nOut = base.filter(p => status(p) === 'out').length;
   const chip = (v, lbl, n) => `<button class="chip ${filter === v ? 'on' : ''}" data-filter="${v}">${lbl}${n != null ? ' · ' + n : ''}</button>`;
-  h += `<div class="chips" style="margin-bottom:10px">${chip('all', 'Tutti', all.length)}${chip('low', 'Sotto scorta', nLow)}${chip('out', 'Esauriti', nOut)}</div>`;
+  h += `<div class="chips" style="margin-bottom:10px">${chip('all', 'Tutti', base.length)}${chip('low', 'Sotto scorta', nLow)}${chip('out', 'Esauriti', nOut)}</div>`;
+  if (restricted) {
+    const catNames = wh.typeIds.map(id => typeName(lid, id)).filter(n => n && n !== '—').join(', ');
+    h += `<div class="muted" style="font-size:12px;margin:-2px 2px 10px">Solo categorie: ${esc(catNames || '—')} · i prodotti con giacenza qui restano visibili</div>`;
+  }
   h += `<div class="field"><input id="mq" placeholder="Cerca prodotto…" value="${esc(q)}"></div>`;
 
-  let list = all;
+  let list = base;
   const term = q.trim().toLowerCase();
   if (term) list = list.filter(p => p.name.toLowerCase().includes(term));
   if (filter === 'low') list = list.filter(p => status(p) === 'low');
@@ -72,7 +85,7 @@ export function render() {
 
   h += `<div class="list two">${list.map(p => `<div class="row click" data-prod="${p.id}">
     <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
-      <div class="t2">${esc(supplierName(p.supplierId))}${scope !== 'all' && whs.length > 1 ? ` · <span class="muted">tot ${totalStock(p)}</span>` : ''}</div></div>
+      <div class="t2">${esc(supplierName(p.supplierId))}${outOfCat(p) ? ' · <span class="badge line" style="font-size:9px">fuori categoria</span>' : ''}${scope !== 'all' && whs.length > 1 ? ` · <span class="muted">tot ${totalStock(p)}</span>` : ''}</div></div>
     ${badge(p)}
     <div style="display:flex;gap:3px;flex-shrink:0;margin-left:8px">
       <button class="btn sm danger" data-out="${p.id}">− Scarico</button>
@@ -82,10 +95,12 @@ export function render() {
   return h;
 }
 
-// se lo scope è "Tutti", chiedi in quale magazzino operare, poi esegui fn(whId)
-function withWarehouse(lid, title, fn) {
-  const whs = warehousesOf(lid);
-  if (scope !== 'all') return fn(scope);
+// se lo scope è "Tutti", chiedi in quale magazzino operare, poi esegui fn(whId).
+// Con `prod` (merce in ingresso), propone solo i magazzini compatibili con la sua categoria
+// (guida morbida: la lista non è mai vuota — vedi compatibleWarehouses).
+function withWarehouse(lid, title, fn, prod) {
+  const whs = prod ? compatibleWarehouses(lid, prod) : warehousesOf(lid);
+  if (scope !== 'all' && whs.some(w => w.id === scope)) return fn(scope);
   if (whs.length === 1) return fn(whs[0].id);
   const opts = whs.map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('');
   openSheet(`
@@ -124,8 +139,12 @@ function transferModal(lid, p, after) {
   const whs = warehousesOf(lid);
   if (whs.length < 2) { toast('Servono almeno due magazzini'); return; }
   const from0 = scope !== 'all' ? scope : whs[0].id;
+  // destinazioni compatibili con la categoria del prodotto (o che ne detengono già giacenza)
+  const dests = compatibleWarehouses(lid, p).filter(w => w.id !== from0);
+  if (!dests.length) { toast('Nessun magazzino di destinazione compatibile'); return; }
+  const to0 = dests[0].id;
   const fromOpts = whs.map(w => `<option value="${w.id}" ${w.id === from0 ? 'selected' : ''}>${esc(w.name)} (${stockOf(p, w.id)})</option>`).join('');
-  const toOpts = whs.map(w => `<option value="${w.id}" ${w.id !== from0 && w.id === whs.find(x => x.id !== from0)?.id ? 'selected' : ''}>${esc(w.name)} (${stockOf(p, w.id)})</option>`).join('');
+  const toOpts = dests.map(w => `<option value="${w.id}" ${w.id === to0 ? 'selected' : ''}>${esc(w.name)} (${stockOf(p, w.id)})</option>`).join('');
   openSheet(`
     <h2>↔ Trasferisci · ${esc(p.name)}</h2>
     <div class="frow">
@@ -194,10 +213,10 @@ function openProduct(id, after) {
     ${movesHtml}`,
     sheet => {
       const reopen = () => openProduct(id, after);
-      sheet.querySelector('[data-in]').onclick = () => withWarehouse(lid, 'Carico · scegli magazzino', wh => moveModal(lid, p, 'in', wh, reopen));
+      sheet.querySelector('[data-in]').onclick = () => withWarehouse(lid, 'Carico · scegli magazzino', wh => moveModal(lid, p, 'in', wh, reopen), p);
       sheet.querySelector('[data-out]').onclick = () => withWarehouse(lid, 'Scarico · scegli magazzino', wh => moveModal(lid, p, 'out', wh, reopen));
       sheet.querySelector('[data-transfer]')?.addEventListener('click', () => transferModal(lid, p, reopen));
-      sheet.querySelector('[data-adj]').onclick = () => withWarehouse(lid, 'Rettifica · scegli magazzino', wh => adjustModal(lid, p, wh, reopen));
+      sheet.querySelector('[data-adj]').onclick = () => withWarehouse(lid, 'Rettifica · scegli magazzino', wh => adjustModal(lid, p, wh, reopen), p);
     });
 }
 
@@ -217,7 +236,15 @@ function adjustModal(lid, p, whId, after) {
     });
 }
 
-// sheet gestione magazzini (aggiungi/rinomina/elimina/riordina)
+// etichetta delle categorie ammesse di un magazzino (per il sottotitolo nella gestione)
+function warehouseTypesLabel(lid, w) {
+  const ids = Array.isArray(w.typeIds) ? w.typeIds : [];
+  if (!ids.length) return 'Tutte le categorie';
+  const names = ids.map(id => typeName(lid, id)).filter(n => n && n !== '—');
+  return names.length ? '🏷 ' + names.join(', ') : 'Tutte le categorie';
+}
+
+// sheet gestione magazzini (aggiungi/rinomina/categorie/elimina/riordina)
 function manageWarehouses(lid, after) {
   const whs = warehousesOf(lid);
   const HANDLE = '<span class="drag-handle" title="Trascina per riordinare" draggable="false">⋮⋮</span>';
@@ -226,9 +253,10 @@ function manageWarehouses(lid, after) {
     <div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addwh>+ Magazzino</button></div>
     <div class="list sortwh">${whs.map(w => `<div class="row" data-sortid="${w.id}">
       ${HANDLE}
-      <div class="mid"><div class="t1">🏬 ${esc(w.name)}</div></div>
+      <div class="mid"><div class="t1">🏬 ${esc(w.name)}</div><div class="t2 muted">${esc(warehouseTypesLabel(lid, w))}</div></div>
       <div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
-        <button class="btn sm" data-whedit="${w.id}">✏️</button>
+        <button class="btn sm" data-whtypes="${w.id}" title="Categorie ammesse">🏷</button>
+        <button class="btn sm" data-whedit="${w.id}" title="Rinomina">✏️</button>
         <button class="btn sm danger" data-whdel="${w.id}" ${whs.length <= 1 ? 'disabled' : ''}>🗑</button>
       </div></div>`).join('')}</div>
     <div class="actions"><button class="btn primary" data-close>Fatto</button></div>`,
@@ -237,6 +265,7 @@ function manageWarehouses(lid, after) {
       sheet.querySelector('[data-close]').onclick = () => { closeSheet(); after && after(); };
       sheet.querySelector('[data-addwh]').onclick = () => nameModal(lid, null, reopen);
       sheet.querySelectorAll('[data-whedit]').forEach(b => b.onclick = () => nameModal(lid, b.dataset.whedit, reopen));
+      sheet.querySelectorAll('[data-whtypes]').forEach(b => b.onclick = () => warehouseTypesModal(lid, b.dataset.whtypes, reopen));
       sheet.querySelector('.sortwh') && makeSortable(sheet.querySelector('.sortwh'), ids => reorderWarehouses(lid, ids));
       sheet.querySelectorAll('[data-whdel]').forEach(b => b.onclick = () => {
         const w = warehouse(lid, b.dataset.whdel);
@@ -245,6 +274,33 @@ function manageWarehouses(lid, after) {
           reopen();
         }, { danger: true });
       });
+    });
+}
+
+// modale selezione categorie ammesse per un magazzino (chip multi-selezione; nessuna = tutte)
+function warehouseTypesModal(lid, whId, after) {
+  const w = warehouse(lid, whId); if (!w) { after && after(); return; }
+  const cats = topTypes(lid);
+  const cur = new Set(Array.isArray(w.typeIds) ? w.typeIds : []);
+  const chipHtml = () => cats.map(c => `<button class="chip ${cur.has(c.id) ? 'on' : ''}" data-cat="${esc(c.id)}">${esc(c.name)}</button>`).join('');
+  openSheet(`
+    <h2>Categorie ammesse · ${esc(w.name)}</h2>
+    <div class="sheetsub">Scegli le categorie che questo magazzino può contenere. <b>Nessuna selezione = tutte le categorie ammesse.</b></div>
+    ${cats.length
+      ? `<div class="chips" data-catchips>${chipHtml()}</div>`
+      : `<div class="card empty" style="padding:14px">Nessuna categoria nel Database.<br><span class="muted">Crea le categorie dal Database per limitare i magazzini.</span></div>`}
+    <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Salva</button></div>`,
+    sheet => {
+      sheet.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => {
+        const id = b.dataset.cat;
+        if (cur.has(id)) { cur.delete(id); b.classList.remove('on'); } else { cur.add(id); b.classList.add('on'); }
+      });
+      sheet.querySelector('[data-cancel]').onclick = () => after && after();
+      sheet.querySelector('[data-ok]').onclick = () => {
+        setWarehouseTypes(lid, whId, [...cur]);
+        toast(cur.size ? 'Categorie aggiornate ✓' : 'Nessun limite: tutte le categorie ✓');
+        after && after();
+      };
     });
 }
 // modal nome magazzino (nuovo/rinomina)
@@ -350,8 +406,14 @@ function batchSheet(lid, after) {
   const render = () => {
     const isTransfer = type === 'transfer';
     const isCarico = type === 'carico';
-    // prodotti mostrati: per il carico tutti (la giacenza può essere 0), altrimenti solo con giacenza in origine
-    let list = isCarico ? productsOf(lid) : productsOf(lid).filter(p => stockOf(p, fromWh) > 0);
+    // Prodotti mostrati, filtrati dalle CATEGORIE del magazzino di destinazione (guida morbida):
+    //  - carico: prodotti ammessi dalla destinazione (carWh) o che vi hanno già giacenza;
+    //  - trasferimento: prodotti con giacenza in origine E ammessi dalla destinazione (o già presenti a dest.);
+    //  - prelievo: solo prodotti con giacenza in origine (merce in uscita: nessun vincolo di categoria).
+    let list;
+    if (isCarico) list = productsOf(lid).filter(p => warehouseAllowsProduct(lid, carWh, p) || stockOf(p, carWh) > 0);
+    else if (isTransfer) list = productsOf(lid).filter(p => stockOf(p, fromWh) > 0 && (warehouseAllowsProduct(lid, toWh, p) || stockOf(p, toWh) > 0));
+    else list = productsOf(lid).filter(p => stockOf(p, fromWh) > 0);
     const term = bq.trim().toLowerCase();
     if (term) list = list.filter(p => p.name.toLowerCase().includes(term));
 
@@ -380,7 +442,7 @@ function batchSheet(lid, after) {
           <button class="btn sm primary" data-bplus="${esc(p.id)}" aria-label="Aumenta">+</button>
         </div>
       </div>`;
-    }).join('') : `<div class="card empty" style="padding:14px">${isCarico ? 'Nessun prodotto nel Database.' : 'Nessun prodotto con giacenza in questo magazzino.'}</div>`;
+    }).join('') : `<div class="card empty" style="padding:14px">${isCarico ? 'Nessun prodotto ammesso in questo magazzino.' : isTransfer ? 'Nessun prodotto trasferibile qui (categoria non ammessa a destinazione o senza giacenza in origine).' : 'Nessun prodotto con giacenza in questo magazzino.'}</div>`;
 
     // riepilogo
     const nProd = Object.values(qty).filter(v => v > 0).length;
@@ -426,8 +488,9 @@ function batchSheet(lid, after) {
       redraw();
     });
     sheet.querySelector('#b_to')?.addEventListener('change', e => {
-      if (type === 'carico') { carWh = e.target.value; redraw(); }  // aggiorna la giacenza mostrata
-      else toWh = e.target.value;
+      // la lista prodotti dipende dalla destinazione (categorie ammesse) → ridisegna sempre
+      if (type === 'carico') carWh = e.target.value; else toWh = e.target.value;
+      redraw();
     });
     const qi = sheet.querySelector('#b_q');
     if (qi) qi.oninput = () => {
@@ -557,6 +620,6 @@ export function bind(root) {
   const qi = root.querySelector('#mq');
   if (qi) qi.oninput = () => { q = qi.value; const pos = qi.selectionStart; rerender(); const n = root.querySelector('#mq'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
   root.querySelectorAll('[data-prod]').forEach(el => el.onclick = () => openProduct(el.dataset.prod, rerender));
-  root.querySelectorAll('[data-in]').forEach(b => b.onclick = e => { e.stopPropagation(); withWarehouse(lid, 'Carico · scegli magazzino', wh => moveModal(lid, product(b.dataset.in), 'in', wh, rerender)); });
+  root.querySelectorAll('[data-in]').forEach(b => b.onclick = e => { e.stopPropagation(); const p = product(b.dataset.in); withWarehouse(lid, 'Carico · scegli magazzino', wh => moveModal(lid, p, 'in', wh, rerender), p); });
   root.querySelectorAll('[data-out]').forEach(b => b.onclick = e => { e.stopPropagation(); withWarehouse(lid, 'Scarico · scegli magazzino', wh => moveModal(lid, product(b.dataset.out), 'out', wh, rerender)); });
 }

@@ -53,8 +53,9 @@ export function defaultLocale(id, name) {
     id, name, emoji: '📦', color: '#7a6a99', note: '', order: 0,
     // categorie/tipologie: {id,name,parentId,order}  (parentId!=null → sottocategoria)
     types: [],
-    // magazzini fisici del locale: {id,name,order} — la giacenza dei prodotti è per magazzino
-    warehouses: [{ id: uid(), name: 'Magazzino principale', order: 0 }],
+    // magazzini fisici del locale: {id,name,order,typeIds:[]} — la giacenza dei prodotti è per magazzino.
+    // typeIds = categorie (type di primo livello) ammesse nel magazzino; VUOTO/assente = tutte ammesse.
+    warehouses: [{ id: uid(), name: 'Magazzino principale', order: 0, typeIds: [] }],
     // punti di consegna: {id,name,address,phone,note,order}
     deliveryPoints: [],
     // note "permanenti" per fornitore: mappa { supplierId: nota } — stampate sul PDF di quel fornitore
@@ -87,7 +88,7 @@ export function migrate(d) {
     if (!Array.isArray(l.deliveryPoints)) l.deliveryPoints = [];
     // magazzini: garantisci sempre almeno un magazzino (crealo se assente/vuoto)
     if (!Array.isArray(l.warehouses) || !l.warehouses.length) l.warehouses = [{ id: uid(), name: 'Magazzino principale', order: 0 }];
-    l.warehouses.forEach((w, k) => { if (!w.id) w.id = uid(); if (!w.name) w.name = 'Magazzino'; if (w.order == null) w.order = k; });
+    l.warehouses.forEach((w, k) => { if (!w.id) w.id = uid(); if (!w.name) w.name = 'Magazzino'; if (w.order == null) w.order = k; if (!Array.isArray(w.typeIds)) w.typeIds = []; });
     if (!l.supplierNotes || typeof l.supplierNotes !== 'object' || Array.isArray(l.supplierNotes)) l.supplierNotes = {};
     if (!l.currentOrder || typeof l.currentOrder !== 'object' || Array.isArray(l.currentOrder)) l.currentOrder = {};
     l.types.forEach((t, k) => { if (!t.id) t.id = uid(); if (t.parentId === undefined) t.parentId = null; if (t.order == null) t.order = k; });

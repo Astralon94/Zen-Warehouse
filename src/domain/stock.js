@@ -255,12 +255,18 @@ export function dismissReceiptSupplier(order, supplierId) {
 export function addWarehouse(localeId, name) {
   const l = loc(localeId); if (!l) return null;
   if (!Array.isArray(l.warehouses)) l.warehouses = [];
-  const w = { id: uid(), name: (name || '').trim() || 'Magazzino', order: l.warehouses.length };
+  const w = { id: uid(), name: (name || '').trim() || 'Magazzino', order: l.warehouses.length, typeIds: [] };
   l.warehouses.push(w); save(); return w;
 }
 export function renameWarehouse(localeId, whId, name) {
   const w = warehousesOf(localeId).find(x => x.id === whId); if (!w) return;
   w.name = (name || '').trim() || w.name; save();
+}
+// categorie ammesse nel magazzino (type di primo livello); array vuoto = tutte ammesse
+export function setWarehouseTypes(localeId, whId, typeIds) {
+  const w = warehousesOf(localeId).find(x => x.id === whId); if (!w) return;
+  w.typeIds = Array.isArray(typeIds) ? typeIds.slice() : [];
+  save();
 }
 // elimina un magazzino: impedito se è l'ultimo; la giacenza viene travasata nel primo rimasto
 export function deleteWarehouse(localeId, whId) {
