@@ -1,11 +1,11 @@
 // ============ Vista Database: prodotti, categorie, fornitori, punti di consegna ============
-import { data } from '../../state/store.js';
+import { data, save } from '../../state/store.js';
 import { esc } from '../../domain/util.js';
 import { FORMATS } from '../../state/model.js';
 import { openSheet, closeSheet, toast, confirmDialog } from '../dom.js';
 import {
   activeLocale, activeLocaleObj, productsOf, suppliersOf, supplierName,
-  topTypes, subTypes, hasSubtypes, type, deliveryPointsOf, totalStock,
+  topTypes, subTypes, hasSubtypes, type, typeName, deliveryPointsOf, totalStock,
 } from '../../domain/warehouse.js';
 import {
   addProduct, updateProduct, deleteProduct, duplicateProduct, reorderProducts,
@@ -20,6 +20,8 @@ const HANDLE = '<span class="drag-handle" title="Trascina per riordinare" dragga
 let tab = 'prodotti';        // prodotti | categorie | fornitori | consegne
 let q = '';                  // ricerca prodotti
 let catFilter = 'all';       // 'all' | typeId | '__none__'
+let selMode = false;         // modalità selezione multipla (Prodotti) — disattiva il drag-drop
+const selected = new Set();  // id dei prodotti selezionati per la modifica massiva
 
 const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0);
 const fmtBadge = f => f ? `<span class="badge soft" style="font-size:10px">${esc(f)}</span>` : '';
@@ -47,11 +49,23 @@ export function render() {
 }
 
 // ---------- PRODOTTI ----------
+// prodotti visibili = ricerca (nome/fornitore) + filtro categoria attivi. Usato dalla vista e da "Seleziona tutti".
+function filteredProducts(lid) {
+  const term = q.trim().toLowerCase();
+  let list = productsOf(lid);
+  if (term) list = list.filter(p => p.name.toLowerCase().includes(term) || supplierName(p.supplierId).toLowerCase().includes(term));
+  return list.filter(p => {
+    if (catFilter === 'all') return true;
+    if (catFilter === '__none__') return !type(lid, p.typeId);
+    const t = type(lid, p.typeId);
+    if (!t) return false;
+    return p.typeId === catFilter || t.parentId === catFilter;
+  });
+}
+
 function prodottiBody(lid) {
   const all = productsOf(lid);
   const term = q.trim().toLowerCase();
-  let list = all;
-  if (term) list = list.filter(p => p.name.toLowerCase().includes(term) || supplierName(p.supplierId).toLowerCase().includes(term));
 
   // chip filtro categoria
   const cats = topTypes(lid);
@@ -59,17 +73,29 @@ function prodottiBody(lid) {
   const chip = (v, label, n) => `<button class="chip ${catFilter === v ? 'on' : ''}" data-cat="${v}">${esc(label)}${n != null ? ' · ' + n : ''}</button>`;
   let h = `<div class="field"><input id="dbq" placeholder="Cerca prodotto o fornitore…" value="${esc(q)}"></div>`;
   h += `<div class="chips" style="margin-bottom:12px">${chip('all', 'Tutti', all.length)}${cats.map(c => chip(c.id, c.name)).join('')}${noneCount ? chip('__none__', 'Senza categoria', noneCount) : ''}</div>`;
-  h += `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addprod>+ Prodotto</button></div>`;
+  h += `<div class="btnrow" style="margin-bottom:12px">
+    <button class="btn primary" data-addprod>+ Prodotto</button>
+    ${all.length ? `<button class="btn${selMode ? ' primary' : ''}" data-selmode>${selMode ? '✓ Fine selezione' : '☑ Seleziona'}</button>` : ''}
+  </div>`;
 
-  // applica filtro categoria
-  const inFilter = p => {
-    if (catFilter === 'all') return true;
-    if (catFilter === '__none__') return !type(lid, p.typeId);
-    const t = type(lid, p.typeId);
-    if (!t) return false;
-    return p.typeId === catFilter || t.parentId === catFilter;
-  };
-  list = list.filter(inFilter);
+  const list = filteredProducts(lid);
+
+  // barra della selezione multipla (mostrata in modalità selezione, anche se il filtro non mostra nulla)
+  if (selMode) {
+    const visN = list.length;
+    const visSel = list.filter(p => selected.has(p.id)).length;
+    const allOn = visN > 0 && visSel === visN;
+    const total = selected.size;
+    h += `<div class="card" style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:11px 14px;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;margin:0">
+        <input type="checkbox" class="selchk" data-selall ${allOn ? 'checked' : ''}> Seleziona tutti${visN ? ` (${visN})` : ''}
+      </label>
+      <span class="muted" style="font-size:13px">${total} selezionat${total === 1 ? 'o' : 'i'}</span>
+      <span class="grow"></span>
+      <button class="btn sm" data-selclear ${total ? '' : 'disabled'}>Deseleziona</button>
+      <button class="btn sm primary" data-bulkedit ${total ? '' : 'disabled'}>✎ Modifica selezionati…</button>
+    </div>`;
+  }
 
   if (!list.length) return h + `<div class="card empty">Nessun prodotto${term ? ' per "' + esc(q) + '"' : ''}.</div>`;
 
@@ -77,7 +103,8 @@ function prodottiBody(lid) {
   const byType = {};
   list.forEach(p => { const k = type(lid, p.typeId) ? p.typeId : '__none__'; (byType[k] = byType[k] || []).push(p); });
 
-  const cardOf = items => `<div class="list sortprod">${items.slice().sort(byOrder).map(p => productRow(lid, p)).join('')}</div>`;
+  // in modalità selezione niente drag-drop: la lista non è "sortprod"
+  const cardOf = items => `<div class="list${selMode ? '' : ' sortprod'}">${items.slice().sort(byOrder).map(p => productRow(lid, p)).join('')}</div>`;
   const section = (title, muted, items) => items.length ? `<div class="section-title" ${muted ? 'style="color:var(--muted)"' : ''}>${esc(title)}</div>${cardOf(items)}` : '';
 
   const out = [];
@@ -104,10 +131,19 @@ function productRow(lid, p) {
   const low = (p.minStock || 0) > 0 && tot <= (p.minStock || 0);
   const stockInfo = (p.minStock || 0) > 0 || tot > 0
     ? `<span style="font-size:11px;color:${low ? 'var(--red,#c2685f)' : 'var(--muted)'}">· scorta ${tot}${p.minStock ? '/' + p.minStock : ''}${low ? ' ⚠️' : ''}</span>` : '';
+  const mid = `<div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}</div>
+      <div class="t2">${esc(supplierName(p.supplierId))}${p.notes ? ' · ' + esc(p.notes) : ''} ${stockInfo}</div></div>`;
+  // riga in modalità selezione: checkbox al posto del drag handle, senza pulsanti d'azione
+  if (selMode) {
+    const on = selected.has(p.id);
+    return `<div class="row selrow${on ? ' on' : ''}" data-selrow="${p.id}">
+      <input type="checkbox" class="selchk" data-selchk="${p.id}" ${on ? 'checked' : ''} aria-label="Seleziona ${esc(p.name)}">
+      ${mid}
+    </div>`;
+  }
   return `<div class="row" data-sortid="${p.id}">
     ${HANDLE}
-    <div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}</div>
-      <div class="t2">${esc(supplierName(p.supplierId))}${p.notes ? ' · ' + esc(p.notes) : ''} ${stockInfo}</div></div>
+    ${mid}
     <div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
       <button class="btn sm" data-dup="${p.id}">⎘</button>
       <button class="btn sm" data-edit="${p.id}">✏️</button>
@@ -188,6 +224,82 @@ function subcatField(lid, catId, subId) {
   if (!subs.length) return '';
   const opts = `<option value="">— Nessuna —</option>` + subs.map(s => `<option value="${s.id}" ${subId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
   return `<div class="field"><label>Sottocategoria</label><select id="p_subcat">${opts}</select></div>`;
+}
+
+// ---------- MODIFICA MASSIVA ----------
+// Applica gli stessi campi a più prodotti. Ogni campo ha "— non modificare —" (default): lasciato così
+// NON tocca i prodotti; solo i campi impostati vengono applicati. Dove ha senso è previsto "svuota"
+// (togliere formato/categoria/fornitore). Campi: formato, categoria(+sottocategoria), fornitore, soglia minima.
+const BULK_KEEP = '__keep__', BULK_CLEAR = '__clear__';
+function bulkSubcatField(lid, catId) {
+  const subs = subTypes(lid, catId);
+  if (!subs.length) return '';
+  const opts = `<option value="">— tutte / nessuna sottocategoria —</option>` + subs.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  return `<div class="field"><label>Sottocategoria</label><select id="b_subcat">${opts}</select></div>`;
+}
+function bulkEditModal(lid, ids) {
+  if (!ids.length) { toast('Nessun prodotto selezionato'); return; }
+  const keepClear = (clearLabel) => `<option value="${BULK_KEEP}" selected>— non modificare —</option><option value="${BULK_CLEAR}">${clearLabel}</option>`;
+  const fmtOpts = keepClear('— Nessuno (svuota) —') + FORMATS.map(f => `<option value="${f}">${f}</option>`).join('');
+  const catOpts = keepClear('— Nessuna (svuota) —') + topTypes(lid).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const supOpts = keepClear('— Nessuno (svuota) —') + suppliersOf(lid).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+
+  openSheet(`
+    <h2>Modifica ${ids.length} prodott${ids.length === 1 ? 'o' : 'i'}</h2>
+    <div class="sheetsub">Solo i campi diversi da "— non modificare —" vengono applicati a tutti i selezionati.</div>
+    <div class="frow">
+      <div class="field"><label>Formato</label><select id="b_fmt">${fmtOpts}</select></div>
+      <div class="field"><label>Categoria</label><select id="b_cat">${catOpts}</select></div>
+    </div>
+    <div id="b_subslot"></div>
+    <div class="field"><label>Fornitore</label><select id="b_sup">${supOpts}</select></div>
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="b_minchk" class="selchk"> Imposta soglia minima</label>
+      <input id="b_min" inputmode="numeric" placeholder="0" disabled style="margin-top:6px">
+    </div>
+    <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Applica</button></div>`,
+    sheet => {
+      const g = s => sheet.querySelector(s);
+      // la sottocategoria compare solo quando si sceglie una categoria reale
+      g('#b_cat').onchange = () => {
+        const v = g('#b_cat').value;
+        g('#b_subslot').innerHTML = (v === BULK_KEEP || v === BULK_CLEAR) ? '' : bulkSubcatField(lid, v);
+      };
+      const minChk = g('#b_minchk'), minInp = g('#b_min');
+      minChk.onchange = () => { minInp.disabled = !minChk.checked; if (minChk.checked) minInp.focus(); };
+      g('[data-cancel]').onclick = closeSheet;
+      g('[data-ok]').onclick = () => {
+        const patch = {};
+        const catV = g('#b_cat').value;
+        if (catV !== BULK_KEEP) {
+          if (catV === BULK_CLEAR) patch.typeId = null;
+          else { const subEl = g('#b_subcat'); patch.typeId = (subEl && subEl.value) ? subEl.value : catV; }
+        }
+        const fmtV = g('#b_fmt').value;
+        if (fmtV !== BULK_KEEP) patch.format = fmtV === BULK_CLEAR ? '' : fmtV;
+        const supV = g('#b_sup').value;
+        if (supV !== BULK_KEEP) patch.supplierId = supV === BULK_CLEAR ? null : supV;
+        if (minChk.checked) patch.minStock = parseInt(minInp.value, 10) || 0;
+
+        if (!Object.keys(patch).length) { toast('Nessuna modifica selezionata'); return; }
+
+        // riepilogo leggibile per la conferma
+        const parts = [];
+        if ('format' in patch) parts.push('formato → ' + (patch.format || 'nessuno'));
+        if ('typeId' in patch) parts.push('categoria → ' + (patch.typeId ? typeName(lid, patch.typeId) : 'nessuna'));
+        if ('supplierId' in patch) parts.push('fornitore → ' + (patch.supplierId ? supplierName(patch.supplierId) : 'nessuno'));
+        if ('minStock' in patch) parts.push('soglia minima → ' + patch.minStock);
+
+        closeSheet();
+        confirmDialog(`Applicare a ${ids.length} prodott${ids.length === 1 ? 'o' : 'i'}?`, parts.join(' · '), 'Applica', () => {
+          let n = 0;
+          ids.forEach(id => { const p = data.products.find(x => x.id === id); if (p) { Object.assign(p, patch); n++; } });
+          selected.clear();              // svuota PRIMA di save(): il re-render (via subscribe) mostra la selezione azzerata
+          save();                        // un solo changeset granulare (save è debounced) + re-render
+          toast(`${n} prodott${n === 1 ? 'o' : 'i'} aggiornat${n === 1 ? 'o' : 'i'} ✓`);
+        });
+      };
+    });
 }
 
 // ---------- CATEGORIE ----------
@@ -344,6 +456,31 @@ export function bind(root) {
   root.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const p = data.products.find(x => x.id === b.dataset.del);
     confirmDialog('Eliminare il prodotto?', p?.name || '', 'Elimina', () => { deleteProduct(b.dataset.del); toast('Prodotto eliminato'); rerender(); }, { danger: true });
+  });
+
+  // Prodotti — selezione multipla / modifica massiva
+  root.querySelector('[data-selmode]')?.addEventListener('click', () => { selMode = !selMode; if (!selMode) selected.clear(); rerender(); });
+  root.querySelector('[data-selall]')?.addEventListener('change', e => {
+    const vis = filteredProducts(lid).map(p => p.id);
+    if (e.target.checked) vis.forEach(id => selected.add(id)); else vis.forEach(id => selected.delete(id));
+    rerender();
+  });
+  root.querySelector('[data-selclear]')?.addEventListener('click', () => { selected.clear(); rerender(); });
+  root.querySelectorAll('[data-selchk]').forEach(chk => chk.addEventListener('change', e => {
+    e.stopPropagation();
+    const id = chk.dataset.selchk;
+    if (chk.checked) selected.add(id); else selected.delete(id);
+    rerender();
+  }));
+  root.querySelectorAll('[data-selrow]').forEach(el => el.addEventListener('click', e => {
+    if (e.target.closest('input')) return; // il click diretto sulla checkbox lo gestisce il change
+    const id = el.dataset.selrow;
+    if (selected.has(id)) selected.delete(id); else selected.add(id);
+    rerender();
+  }));
+  root.querySelector('[data-bulkedit]')?.addEventListener('click', () => {
+    const ids = [...selected].filter(id => data.products.some(p => p.id === id));
+    bulkEditModal(lid, ids);
   });
 
   // Categorie

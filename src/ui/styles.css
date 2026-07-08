@@ -281,6 +281,11 @@ table.matrix td.mcell:hover { box-shadow: inset 0 0 0 2px var(--accent); }
 /* tablet/laptop stretti: le KPI a 4 colonne diventano 2 per non schiacciarsi */
 @media (min-width: 641px) and (max-width: 980px) { .grid.k4 { grid-template-columns: repeat(2, 1fr); } }
 
+/* Selezione multipla righe (Database → Prodotti) */
+.row.selrow { cursor: pointer; }
+.row.selrow.on { background: var(--accent-soft); }
+.selchk { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--accent); cursor: pointer; margin: 0; }
+
 /* Riordino via drag-drop */
 .drag-handle { cursor: grab; color: var(--faint); font-size: 15px; padding: 0 6px 0 2px; user-select: none; flex-shrink: 0; line-height: 1; }
 .drag-handle:active { cursor: grabbing; }
