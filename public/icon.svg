@@ -6,13 +6,15 @@
       <stop offset="1" stop-color="#5f5279"/>
     </linearGradient>
   </defs>
-  <rect x="92" y="92" width="840" height="840" rx="208" ry="208" fill="url(#g)"/>
-  <!-- scatola / pacco -->
-  <g fill="none" stroke="#ffffff" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="300" y="322" width="424" height="424" rx="56"/>
-    <line x1="300" y1="470" x2="724" y2="470"/>
-    <line x1="512" y1="322" x2="512" y2="470"/>
+  <rect width="1024" height="1024" rx="246" ry="246" fill="url(#g)"/>
+  <g transform="translate(512 512) scale(1.25) translate(-512 -534)">
+    <!-- scatola / pacco -->
+    <g fill="none" stroke="#ffffff" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="300" y="322" width="424" height="424" rx="56"/>
+      <line x1="300" y1="470" x2="724" y2="470"/>
+      <line x1="512" y1="322" x2="512" y2="470"/>
+    </g>
+    <!-- etichetta -->
+    <rect x="446" y="556" width="132" height="120" rx="18" fill="#ffffff"/>
   </g>
-  <!-- etichetta -->
-  <rect x="446" y="556" width="132" height="120" rx="18" fill="#ffffff"/>
 </svg>
