@@ -172,6 +172,15 @@ function productModal(lid, id, prefill) {
         toast('Aggiunto ✓ — inserisci il prossimo');
         setTimeout(() => document.getElementById('p_name')?.focus(), 60);
       });
+      // Invio in un campo di testo = come il pulsante primario (come Zen-Orders):
+      // nuovo → "Aggiungi e continua" (salva e riparte); modifica → "Salva". I <select> mantengono
+      // il comportamento nativo dell'Invio; qui non ci sono textarea (Note è un input).
+      sheet.querySelectorAll('input').forEach(inp => inp.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        (isNew ? g('[data-add]') : g('[data-save]'))?.click();
+      }));
+      setTimeout(() => g('#p_name')?.focus(), 60);
     });
 }
 function subcatField(lid, catId, subId) {
@@ -234,6 +243,11 @@ function typeModal(lid, id, presetParent) {
         else addType(lid, { name, parentId });
         closeSheet(); toast(id ? 'Categoria aggiornata ✓' : 'Categoria aggiunta ✓');
       };
+      // Invio sul nome = pulsante primario (come Zen-Orders)
+      sheet.querySelector('#t_name').addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return; e.preventDefault(); sheet.querySelector('[data-ok]').click();
+      });
+      setTimeout(() => sheet.querySelector('#t_name')?.focus(), 60);
     });
 }
 
