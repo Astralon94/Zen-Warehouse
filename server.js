@@ -174,5 +174,6 @@ createServer(async (req, res) => {
   console.log(`\n  Zen-Warehouse — server dati (v${updater.currentVersion(__dirname)})`);
   console.log(`  ▸ http://localhost:${PORT}`);
   console.log(`  ▸ rev ${counts().rev}\n`);
+  updater.bootstrapAssets(__dirname); // materializza le icone (bootstrap una-tantum)
   programmaAggiornamenti(); // controllo aggiornamenti all'avvio e ogni 12 ore
 });
