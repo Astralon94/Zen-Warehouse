@@ -5,6 +5,7 @@ import { activeLocale, activeLocaleObj, ordersOf, deliveryPointsOf, loc, warehou
 import { generateOrderPdfs, orderSummary } from '../../domain/orderpdf.js';
 import { deleteOrder, reorderFrom } from '../../domain/orders.js';
 import { receiveOrder } from '../../domain/stock.js';
+import { can } from '../../state/auth.js';
 import { go } from '../app.js';
 
 let q = '';   // filtro testo (fornitore o prodotto)
@@ -77,9 +78,9 @@ function openOrder(id) {
     ${groupsHtml}
     <div class="btnrow" style="margin-top:14px">
       <button class="btn primary" data-reprint>⤓ Rigenera PDF</button>
-      <button class="btn" data-reorder>↻ Ri-ordina</button>
-      ${o.status === 'received' || o.status === 'closed' ? '' : '<button class="btn" data-receive>📥 Ricevi (carico)</button>'}
-      <button class="btn danger" data-del>Elimina</button>
+      ${can('ordini.manage') ? '<button class="btn" data-reorder>↻ Ri-ordina</button>' : ''}
+      ${(o.status === 'received' || o.status === 'closed' || !can('magazzino.manage')) ? '' : '<button class="btn" data-receive>📥 Ricevi (carico)</button>'}
+      ${can('ordini.manage') ? '<button class="btn danger" data-del>Elimina</button>' : ''}
     </div>`,
     sheet => {
       sheet.querySelector('[data-receive]')?.addEventListener('click', () => {
@@ -106,19 +107,19 @@ function openOrder(id) {
         showPdfDownloadSheet(pdfs, dpObj);
         toast(pdfs.length === 1 ? '1 PDF rigenerato ✓' : `${pdfs.length} PDF rigenerati ✓`);
       };
-      sheet.querySelector('[data-reorder]').onclick = () => {
+      sheet.querySelector('[data-reorder]')?.addEventListener('click', () => {
         confirmDialog('Ri-ordinare?', 'Le quantità di questo ordine vengono caricate nell\'ordine in corso (sovrascrive quello attuale).', 'Ri-ordina', () => {
           const n = reorderFrom(o);
           closeSheet();
           toast(n ? `${n} prodotti caricati nell'ordine ✓` : 'Nessun prodotto ancora disponibile');
           go('ord');
         });
-      };
-      sheet.querySelector('[data-del]').onclick = () => {
+      });
+      sheet.querySelector('[data-del]')?.addEventListener('click', () => {
         confirmDialog('Eliminare l\'ordine dallo storico?', fmtDateTime(o.sentAt || o.createdAt), 'Elimina', () => {
           deleteOrder(id); closeSheet(); toast('Ordine eliminato');
         }, { danger: true });
-      };
+      });
     });
 }
 

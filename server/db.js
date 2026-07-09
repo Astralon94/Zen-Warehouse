@@ -18,6 +18,20 @@ function ddl() {
   let sql = `
     CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
     CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);
+    -- Utenti/permessi (multiutenza): tabella STANDALONE, fuori da COLLECTIONS.
+    -- Import/export/reset/changes NON la toccano mai (le password non finiscono nei
+    -- backup JSON e un import non azzera gli account). Additiva: i DB esistenti
+    -- ricevono la tabella al primo avvio, dati intatti.
+    CREATE TABLE IF NOT EXISTS utenti (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      username      TEXT    UNIQUE NOT NULL,
+      nome          TEXT,
+      password_hash TEXT    NOT NULL,
+      ruolo         TEXT    NOT NULL DEFAULT 'standard',  -- admin | standard
+      permessi      TEXT    NOT NULL DEFAULT '[]',        -- JSON array di chiavi permesso
+      attivo        INTEGER NOT NULL DEFAULT 1,
+      creato_il     TEXT    NOT NULL
+    );
   `;
   for (const c of COLLECTIONS) {
     const cols = c.cols.map((x) => `${x.n} ${x.type}`).join(', ');

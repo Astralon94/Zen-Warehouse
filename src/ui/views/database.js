@@ -14,7 +14,9 @@ import {
   addDeliveryPoint, updateDeliveryPoint, deleteDeliveryPoint, reorderDeliveryPoints,
 } from '../../domain/catalog.js';
 import { makeSortable } from '../sortable.js';
+import { can } from '../../state/auth.js';
 
+const cManage = () => can('database.manage');   // CRUD anagrafiche gated
 const HANDLE = '<span class="drag-handle" title="Trascina per riordinare" draggable="false">⋮⋮</span>';
 
 let tab = 'prodotti';        // prodotti | categorie | fornitori | consegne
@@ -73,7 +75,7 @@ function prodottiBody(lid) {
   const chip = (v, label, n) => `<button class="chip ${catFilter === v ? 'on' : ''}" data-cat="${v}">${esc(label)}${n != null ? ' · ' + n : ''}</button>`;
   let h = `<div class="field"><input id="dbq" placeholder="Cerca prodotto o fornitore…" value="${esc(q)}"></div>`;
   h += `<div class="chips" style="margin-bottom:12px">${chip('all', 'Tutti', all.length)}${cats.map(c => chip(c.id, c.name)).join('')}${noneCount ? chip('__none__', 'Senza categoria', noneCount) : ''}</div>`;
-  h += `<div class="btnrow" style="margin-bottom:12px">
+  if (cManage()) h += `<div class="btnrow" style="margin-bottom:12px">
     <button class="btn primary" data-addprod>+ Prodotto</button>
     ${all.length ? `<button class="btn${selMode ? ' primary' : ''}" data-selmode>${selMode ? '✓ Fine selezione' : '☑ Seleziona'}</button>` : ''}
   </div>`;
@@ -104,7 +106,7 @@ function prodottiBody(lid) {
   list.forEach(p => { const k = type(lid, p.typeId) ? p.typeId : '__none__'; (byType[k] = byType[k] || []).push(p); });
 
   // in modalità selezione niente drag-drop: la lista non è "sortprod"
-  const cardOf = items => `<div class="list${selMode ? '' : ' sortprod'}">${items.slice().sort(byOrder).map(p => productRow(lid, p)).join('')}</div>`;
+  const cardOf = items => `<div class="list${(selMode || !cManage()) ? '' : ' sortprod'}">${items.slice().sort(byOrder).map(p => productRow(lid, p)).join('')}</div>`;
   const section = (title, muted, items) => items.length ? `<div class="section-title" ${muted ? 'style="color:var(--muted)"' : ''}>${esc(title)}</div>${cardOf(items)}` : '';
 
   const out = [];
@@ -141,6 +143,7 @@ function productRow(lid, p) {
       ${mid}
     </div>`;
   }
+  if (!cManage()) return `<div class="row">${mid}</div>`;
   return `<div class="row" data-sortid="${p.id}">
     ${HANDLE}
     ${mid}
@@ -305,7 +308,7 @@ function bulkEditModal(lid, ids) {
 // ---------- CATEGORIE ----------
 function categorieBody(lid) {
   const cats = topTypes(lid);
-  let h = `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addcat>+ Categoria</button></div>`;
+  let h = cManage() ? `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addcat>+ Categoria</button></div>` : '';
   if (!cats.length) return h + `<div class="card empty">Nessuna categoria. Aggiungine una per organizzare i prodotti.</div>`;
   h += `<div class="list">`;
   cats.forEach(c => {
@@ -316,16 +319,17 @@ function categorieBody(lid) {
   return h;
 }
 function rowCat(t, groupSize, isSub) {
-  return `<div class="row" ${isSub ? 'style="padding-left:22px"' : ''}>
-    <div class="emoji">${isSub ? '↳' : '🏷'}</div>
-    <div class="mid"><div class="t1">${esc(t.name)}</div></div>
-    <div style="display:flex;gap:3px;flex-shrink:0">
+  const actions = cManage() ? `<div style="display:flex;gap:3px;flex-shrink:0">
       ${!isSub ? `<button class="btn sm" data-addsub="${t.id}">+ sott.</button>` : ''}
       <button class="btn sm" data-catup="${t.id}" ${groupSize < 2 ? 'disabled' : ''}>↑</button>
       <button class="btn sm" data-catdown="${t.id}" ${groupSize < 2 ? 'disabled' : ''}>↓</button>
       <button class="btn sm" data-catedit="${t.id}">✏️</button>
       <button class="btn sm danger" data-catdel="${t.id}">🗑</button>
-    </div>
+    </div>` : '';
+  return `<div class="row" ${isSub ? 'style="padding-left:22px"' : ''}>
+    <div class="emoji">${isSub ? '↳' : '🏷'}</div>
+    <div class="mid"><div class="t1">${esc(t.name)}</div></div>
+    ${actions}
   </div>`;
 }
 function typeModal(lid, id, presetParent) {
@@ -366,15 +370,16 @@ function typeModal(lid, id, presetParent) {
 // ---------- FORNITORI ----------
 function fornitoriBody(lid) {
   const list = suppliersOf(lid);
-  let h = `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addsup>+ Fornitore</button></div>`;
+  const ro = !cManage();
+  let h = ro ? '' : `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addsup>+ Fornitore</button></div>`;
   if (!list.length) return h + `<div class="card empty">Nessun fornitore.</div>`;
-  h += `<div class="list sortsup">${list.map(s => `<div class="row" data-sortid="${s.id}">
-    ${HANDLE}
+  h += `<div class="list${ro ? '' : ' sortsup'}">${list.map(s => `<div class="row"${ro ? '' : ` data-sortid="${s.id}"`}>
+    ${ro ? '' : HANDLE}
     <div class="mid"><div class="t1">🚚 ${esc(s.name)}</div><div class="t2">${[s.phone, s.email].filter(Boolean).map(esc).join(' · ')}${s.note ? ' · ' + esc(s.note) : ''}</div></div>
-    <div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
+    ${ro ? '' : `<div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
       <button class="btn sm" data-supedit="${s.id}">✏️</button>
       <button class="btn sm danger" data-supdel="${s.id}">🗑</button>
-    </div></div>`).join('')}</div>`;
+    </div>`}</div>`).join('')}</div>`;
   return h;
 }
 function supplierModal(lid, id) {
@@ -403,15 +408,16 @@ function supplierModal(lid, id) {
 // ---------- PUNTI DI CONSEGNA ----------
 function consegneBody(lid) {
   const list = deliveryPointsOf(lid);
-  let h = `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-adddp>+ Punto di consegna</button></div>`;
+  const ro = !cManage();
+  let h = ro ? '' : `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-adddp>+ Punto di consegna</button></div>`;
   if (!list.length) return h + `<div class="card empty">Nessun punto di consegna.</div>`;
-  h += `<div class="list sortdp">${list.map(d => `<div class="row" data-sortid="${d.id}">
-    ${HANDLE}
+  h += `<div class="list${ro ? '' : ' sortdp'}">${list.map(d => `<div class="row"${ro ? '' : ` data-sortid="${d.id}"`}>
+    ${ro ? '' : HANDLE}
     <div class="mid"><div class="t1">📍 ${esc(d.name)}</div><div class="t2">${[d.address, d.contact, d.phone].filter(Boolean).map(esc).join(' · ')}${d.note ? ' · ' + esc(d.note) : ''}</div></div>
-    <div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
+    ${ro ? '' : `<div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
       <button class="btn sm" data-dpedit="${d.id}">✏️</button>
       <button class="btn sm danger" data-dpdel="${d.id}">🗑</button>
-    </div></div>`).join('')}</div>`;
+    </div>`}</div>`).join('')}</div>`;
   return h;
 }
 function deliveryPointModal(lid, id) {

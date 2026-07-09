@@ -7,6 +7,7 @@ import {
 } from '../../domain/warehouse.js';
 import { addQty, setQty, clearOrder, orderTotals, sendOrder, supplierNoteOf, setSupplierNote, clearSupplierNote } from '../../domain/orders.js';
 import { generateOrderPdfs } from '../../domain/orderpdf.js';
+import { can } from '../../state/auth.js';
 import { go } from '../app.js';
 
 const fmtBadge = f => f ? `<span class="badge soft" style="font-size:10px">${esc(f)}</span>` : '';
@@ -42,17 +43,22 @@ export function render() {
 
   h += `<div style="padding-bottom:88px">${body}</div>`;
 
-  // barra fissa in basso: note per fornitore (se ci sono righe) + azioni
+  // barra fissa in basso: note per fornitore (se ci sono righe) + azioni. Solo con ordini.manage:
+  // un utente in sola lettura vede le quantità in corso ma non compone/invia.
   const t = orderTotals(lid);
-  h += `<div id="orderbar" style="position:fixed;left:0;right:0;bottom:0;background:var(--card,var(--surface));border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom,0));z-index:20;max-width:900px;margin:0 auto">
-    ${noteButtonsRow(lid)}
-    <div style="display:flex;gap:10px">
-      ${t.righe ? `<button class="btn" data-clear>Svuota</button>` : ''}
-      <button class="btn primary" style="flex:1" data-gen ${t.righe ? '' : 'disabled'}>${t.righe ? `📄 Genera PDF · ${t.righe} prodotti · ${t.pezzi} pz` : 'Inserisci le quantità'}</button>
-    </div>
-  </div>`;
+  if (canManage()) {
+    h += `<div id="orderbar" style="position:fixed;left:0;right:0;bottom:0;background:var(--card,var(--surface));border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom,0));z-index:20;max-width:900px;margin:0 auto">
+      ${noteButtonsRow(lid)}
+      <div style="display:flex;gap:10px">
+        ${t.righe ? `<button class="btn" data-clear>Svuota</button>` : ''}
+        <button class="btn primary" style="flex:1" data-gen ${t.righe ? '' : 'disabled'}>${t.righe ? `📄 Genera PDF · ${t.righe} prodotti · ${t.pezzi} pz` : 'Inserisci le quantità'}</button>
+      </div>
+    </div>`;
+  }
   return h;
 }
+
+const canManage = () => can('ordini.manage');
 
 // Fornitori con prodotti attivi nell'ordine in corso (chiave '__none__' = senza fornitore),
 // nell'ordine di prima apparizione delle righe.
@@ -78,14 +84,18 @@ function noteButtonsRow(lid) {
 
 function orderRow(lid, p) {
   const qty = orderQty(lid, p.id);
-  return `<div class="row ${qty > 0 ? 'sel' : ''}" data-pid="${p.id}">
-    <div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}</div>
-      <div class="t2">${esc(supplierName(p.supplierId))}</div></div>
-    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+  // Sola lettura (senza ordini.manage): mostra la quantità in corso senza stepper editabile.
+  const control = canManage()
+    ? `<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
       <button class="btn sm" data-minus="${p.id}">−</button>
       <input class="qtyinp" data-qty="${p.id}" type="number" min="0" inputmode="numeric" value="${qty}" style="width:56px;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg,var(--surface));color:var(--txt)">
       <button class="btn sm primary" data-plus="${p.id}">+</button>
-    </div>
+    </div>`
+    : `<div class="amt tnum" style="font-weight:800;flex-shrink:0">${qty}</div>`;
+  return `<div class="row ${qty > 0 ? 'sel' : ''}" data-pid="${p.id}">
+    <div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}</div>
+      <div class="t2">${esc(supplierName(p.supplierId))}</div></div>
+    ${control}
   </div>`;
 }
 
@@ -94,6 +104,8 @@ export function bind(root) {
   const rerender = () => { root.innerHTML = render(); bind(root); };
 
   root.querySelector('[data-godb]')?.addEventListener('click', () => go('db'));
+
+  if (!canManage()) return;   // sola lettura: nessun handler di composizione/invio
 
   // aggiornamento parziale (niente re-render completo a ogni tap)
   const updateRow = pid => {

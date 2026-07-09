@@ -6,6 +6,7 @@
 // Il frontend continua a mutare `data` e chiamare save(); il diff lo calcola questo modulo.
 
 import { DEFAULT_DATA, migrate, DATA_VERSION } from './model.js';
+import { authFetch } from './auth.js';
 
 export let data = DEFAULT_DATA();
 
@@ -67,7 +68,7 @@ function diff(prev, d) {
 // ---- Boot ----
 export async function boot() {
   try {
-    const res = await fetch('/api/data');
+    const res = await authFetch('/api/data');
     data = res.ok ? migrate(await res.json()) : DEFAULT_DATA();
   } catch (e) { console.error('Boot: server non raggiungibile', e); data = DEFAULT_DATA(); }
   snapshot = snapOf(data);
@@ -101,7 +102,7 @@ async function flushChanges() {
   const sent = snapOf(data);
   inflight = true; dirty = false; notifyStatus();
   try {
-    const res = await fetch('/api/changes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cs) });
+    const res = await authFetch('/api/changes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cs) });
     if (res.ok) { const j = await res.json(); if (j && j.rev) data.rev = j.rev; snapshot = sent; lastSavedAt = Date.now(); errored = false; }
     else if (res.status === 409) { // un'altra scheda ha scritto: NON sovrascrivere, chiedi all'utente
       const j = await res.json().catch(() => ({}));
@@ -120,7 +121,7 @@ async function flushChanges() {
 // Ricarica lo stato dal server SCARTANDO le modifiche locali non salvate (scelta "Ricarica" nel conflitto).
 export async function reloadFromServer() {
   try {
-    const res = await fetch('/api/data');
+    const res = await authFetch('/api/data');
     if (!res.ok) return false;
     data = migrate(await res.json());
     snapshot = snapOf(data);
@@ -142,7 +143,7 @@ export function forceSave() {
 async function putWhole({ force = false } = {}) {
   inflight = true; notifyStatus();
   try {
-    const res = await fetch('/api/data' + (force ? '?force=1' : ''), {
+    const res = await authFetch('/api/data' + (force ? '?force=1' : ''), {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
     });
     if (res.ok) { const j = await res.json(); if (j && j.rev) data.rev = j.rev; lastSavedAt = Date.now(); dirty = false; errored = false; }
@@ -164,7 +165,7 @@ export function flush() {
   if (!cs) return;
   cs.baseRev = data.rev ?? null; // se un'altra scheda ha già scritto, il server rifiuta (protegge i dati)
   try {
-    fetch('/api/changes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cs), keepalive: true });
+    authFetch('/api/changes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cs), keepalive: true });
   } catch (e) {}
 }
 

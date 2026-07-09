@@ -14,7 +14,10 @@ import {
   applyMovementBatch, schede, schedaById,
 } from '../../domain/stock.js';
 import { generateMovementSlip } from '../../domain/orderpdf.js';
+import { can } from '../../state/auth.js';
 import { makeSortable } from '../sortable.js';
+
+const cManage = () => can('magazzino.manage');   // scritture scorte gated
 
 let q = '';
 let filter = 'all';    // all | low | out
@@ -48,10 +51,10 @@ export function render() {
   h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
     <div class="chips" style="margin:0">${whChip('all', 'Tutti i magazzini')}${whs.map(w => whChip(w.id, w.name)).join('')}</div>
     <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap">
-      <button class="btn sm primary" data-receipts>📥 Carico da ordini${pendBadge}</button>
-      <button class="btn sm" data-batch>⇅ Movimento massivo</button>
+      ${cManage() ? `<button class="btn sm primary" data-receipts>📥 Carico da ordini${pendBadge}</button>
+      <button class="btn sm" data-batch>⇅ Movimento massivo</button>` : ''}
       <button class="btn sm" data-schede>🧾 Schede</button>
-      <button class="btn sm" data-managewh>⚙︎ Gestisci magazzini</button>
+      ${cManage() ? '<button class="btn sm" data-managewh>⚙︎ Gestisci magazzini</button>' : ''}
     </div>
   </div>`;
 
@@ -87,10 +90,10 @@ export function render() {
     <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
       <div class="t2">${esc(supplierName(p.supplierId))}${outOfCat(p) ? ' · <span class="badge line" style="font-size:9px">fuori categoria</span>' : ''}${scope !== 'all' && whs.length > 1 ? ` · <span class="muted">tot ${totalStock(p)}</span>` : ''}</div></div>
     ${badge(p)}
-    <div style="display:flex;gap:3px;flex-shrink:0;margin-left:8px">
+    ${cManage() ? `<div style="display:flex;gap:3px;flex-shrink:0;margin-left:8px">
       <button class="btn sm danger" data-out="${p.id}">− Scarico</button>
       <button class="btn sm primary" data-in="${p.id}">+ Carico</button>
-    </div>
+    </div>` : ''}
   </div>`).join('')}</div>`;
   return h;
 }
@@ -201,22 +204,22 @@ function openProduct(id, after) {
   openSheet(`
     <h2>${esc(p.name)}</h2>
     <div class="sheetsub">Giacenza totale <b>${totalStock(p)}</b>${(p.minStock || 0) > 0 ? ` · soglia minima ${p.minStock}` : ''} · ${esc(supplierName(p.supplierId))}</div>
-    <div class="btnrow" style="margin:6px 0 14px">
+    ${cManage() ? `<div class="btnrow" style="margin:6px 0 14px">
       <button class="btn primary" data-in>➕ Carico</button>
       <button class="btn danger" data-out>➖ Scarico</button>
       ${whs.length > 1 ? '<button class="btn" data-transfer>↔ Trasferisci</button>' : ''}
       <button class="btn" data-adj>✎ Rettifica</button>
-    </div>
+    </div>` : ''}
     <div class="section-title">Giacenza per magazzino</div>
     ${breakdown}
     <div class="section-title">Movimenti</div>
     ${movesHtml}`,
     sheet => {
       const reopen = () => openProduct(id, after);
-      sheet.querySelector('[data-in]').onclick = () => withWarehouse(lid, 'Carico · scegli magazzino', wh => moveModal(lid, p, 'in', wh, reopen), p);
-      sheet.querySelector('[data-out]').onclick = () => withWarehouse(lid, 'Scarico · scegli magazzino', wh => moveModal(lid, p, 'out', wh, reopen));
+      sheet.querySelector('[data-in]')?.addEventListener('click', () => withWarehouse(lid, 'Carico · scegli magazzino', wh => moveModal(lid, p, 'in', wh, reopen), p));
+      sheet.querySelector('[data-out]')?.addEventListener('click', () => withWarehouse(lid, 'Scarico · scegli magazzino', wh => moveModal(lid, p, 'out', wh, reopen)));
       sheet.querySelector('[data-transfer]')?.addEventListener('click', () => transferModal(lid, p, reopen));
-      sheet.querySelector('[data-adj]').onclick = () => withWarehouse(lid, 'Rettifica · scegli magazzino', wh => adjustModal(lid, p, wh, reopen), p);
+      sheet.querySelector('[data-adj]')?.addEventListener('click', () => withWarehouse(lid, 'Rettifica · scegli magazzino', wh => adjustModal(lid, p, wh, reopen), p));
     });
 }
 

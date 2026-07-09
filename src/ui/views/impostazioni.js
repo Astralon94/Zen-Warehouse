@@ -1,53 +1,75 @@
 // ============ Vista Impostazioni (Zen-Warehouse) ============
 import { data, save, setTheme, setData, reloadFromServer } from '../../state/store.js';
+import { can, authFetch } from '../../state/auth.js';
 import { esc, safeFileName, fmtDateFull } from '../../domain/util.js';
 import { openSheet, closeSheet, toast, confirmDialog, downloadText } from '../dom.js';
 import { newLocale } from '../../state/model.js';
 import { activeLocale } from '../../domain/warehouse.js';
 
 export function render() {
+  const cManage = can('impostazioni.manage');   // tema + aggiornamento software
+  const cLocali = can('locali.manage');          // gestione locali
+  const cExport = can('dati.export');            // esporta backup
+  const cImport = can('dati.import');            // importa/sostituisci + azzera
   const theme = (data.settings && data.settings.theme) || 'auto';
   const themeBtn = (v, label) => `<button class="chip ${theme === v ? 'on' : ''}" data-theme="${v}">${label}</button>`;
 
   let h = `<div class="pagehead"><h1>Impostazioni</h1></div>`;
+  let any = false;   // qualche sezione operativa mostrata?
 
   // Tema
-  h += `<div class="section-title">Tema</div>
-    <div class="chips" style="margin-bottom:16px">${themeBtn('auto', 'Auto')}${themeBtn('light', 'Chiaro')}${themeBtn('dark', 'Scuro')}</div>`;
+  if (cManage) {
+    any = true;
+    h += `<div class="section-title">Tema</div>
+      <div class="chips" style="margin-bottom:16px">${themeBtn('auto', 'Auto')}${themeBtn('light', 'Chiaro')}${themeBtn('dark', 'Scuro')}</div>`;
+  }
 
   // Locali
-  h += `<div class="section-title">Locali</div><div class="list">`;
-  h += data.locali.map(l => `<div class="row">
-      <div class="emoji">${esc(l.emoji || '📦')}</div>
-      <div class="mid"><div class="t1">${esc(l.name)}${l.id === activeLocale() ? ' <span class="badge">attivo</span>' : ''}</div></div>
-      <button class="btn sm" data-ren="${l.id}">Rinomina</button>
-      ${data.locali.length > 1 ? `<button class="btn sm danger" data-dell="${l.id}">Elimina</button>` : ''}
-    </div>`).join('');
-  h += `</div><div class="btnrow" style="margin:10px 0 18px"><button class="btn" data-newloc>+ Nuovo locale</button></div>`;
+  if (cLocali) {
+    any = true;
+    h += `<div class="section-title">Locali</div><div class="list">`;
+    h += data.locali.map(l => `<div class="row">
+        <div class="emoji">${esc(l.emoji || '📦')}</div>
+        <div class="mid"><div class="t1">${esc(l.name)}${l.id === activeLocale() ? ' <span class="badge">attivo</span>' : ''}</div></div>
+        <button class="btn sm" data-ren="${l.id}">Rinomina</button>
+        ${data.locali.length > 1 ? `<button class="btn sm danger" data-dell="${l.id}">Elimina</button>` : ''}
+      </div>`).join('');
+    h += `</div><div class="btnrow" style="margin:10px 0 18px"><button class="btn" data-newloc>+ Nuovo locale</button></div>`;
+  }
 
   // Backup
-  h += `<div class="section-title">Backup dati</div>
-    <div class="btnrow" style="margin-bottom:6px">
-      <button class="btn" data-export>⤓ Esporta JSON</button>
-      <button class="btn" data-import>⤒ Importa JSON</button>
-      <input type="file" id="impFile" accept="application/json,.json" style="display:none">
-    </div>
-    <div class="muted" style="font-size:12px;margin-bottom:18px">L'export contiene l'intero database (locali, prodotti, fornitori, ordini, scorte). All'import puoi scegliere se <b>sostituire tutto</b> o <b>unire</b> i locali del backup a quelli attuali (con backup automatico lato server).</div>`;
+  if (cExport || cImport) {
+    any = true;
+    h += `<div class="section-title">Backup dati</div>
+      <div class="btnrow" style="margin-bottom:6px">
+        ${cExport ? '<button class="btn" data-export>⤓ Esporta JSON</button>' : ''}
+        ${cImport ? '<button class="btn" data-import>⤒ Importa JSON</button><input type="file" id="impFile" accept="application/json,.json" style="display:none">' : ''}
+      </div>
+      <div class="muted" style="font-size:12px;margin-bottom:18px">L'export contiene l'intero database (locali, prodotti, fornitori, ordini, scorte). All'import puoi scegliere se <b>sostituire tutto</b> o <b>unire</b> i locali del backup a quelli attuali (con backup automatico lato server).</div>`;
+  }
 
   // Aggiornamento software
-  h += `<div class="section-title">Aggiornamento software</div>
-    <div class="card">
-      <div class="muted" style="font-size:13px;margin-bottom:10px">Gli aggiornamenti vengono scaricati da <b>GitHub</b> e installati senza toccare i dati (la cartella <b>data/</b> non viene mai modificata). Il controllo è automatico all'avvio e ogni 12 ore; al termine dell'installazione il server si riavvia da solo.</div>
-      <div class="muted" id="upd_stato" style="font-size:13px;margin-bottom:10px">Versione installata: …</div>
-      <div class="btnrow">
-        <button class="btn" data-updcheck>Controlla ora</button>
-        <button class="btn" data-updinstall style="display:none">Installa e riavvia</button>
-      </div>
-    </div>`;
+  if (cManage) {
+    any = true;
+    h += `<div class="section-title">Aggiornamento software</div>
+      <div class="card">
+        <div class="muted" style="font-size:13px;margin-bottom:10px">Gli aggiornamenti vengono scaricati da <b>GitHub</b> e installati senza toccare i dati (la cartella <b>data/</b> non viene mai modificata). Il controllo è automatico all'avvio e ogni 12 ore; al termine dell'installazione il server si riavvia da solo.</div>
+        <div class="muted" id="upd_stato" style="font-size:13px;margin-bottom:10px">Versione installata: …</div>
+        <div class="btnrow">
+          <button class="btn" data-updcheck>Controlla ora</button>
+          <button class="btn" data-updinstall style="display:none">Installa e riavvia</button>
+        </div>
+      </div>`;
+  }
 
   // Zona pericolo
-  h += `<div class="section-title">Zona pericolo</div>
-    <div class="btnrow"><button class="btn danger" data-reset>Azzera database</button></div>`;
+  if (cImport) {
+    any = true;
+    h += `<div class="section-title">Zona pericolo</div>
+      <div class="btnrow"><button class="btn danger" data-reset>Azzera database</button></div>`;
+  }
+
+  if (!any) h += `<div class="card empty">Non hai sezioni modificabili qui.<br><span class="muted">Contatta l'amministratore per ulteriori permessi.</span></div>`;
 
   h += `<div class="muted" style="text-align:center;font-size:12px;margin-top:24px">Zen Warehouse · <span id="app_ver">v…</span> · server locale</div>`;
 
@@ -57,7 +79,7 @@ export function render() {
 export function bind(root) {
   root.querySelectorAll('[data-theme]').forEach(b => b.onclick = () => { setTheme(b.dataset.theme); rerender(root); });
 
-  root.querySelector('[data-newloc]').onclick = () => {
+  root.querySelector('[data-newloc]')?.addEventListener('click', () => {
     openSheet(`<h2>Nuovo locale</h2>
       <div class="field"><label>Nome</label><input id="loc_name" placeholder="Es. Bar Centrale"></div>
       <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Crea</button></div>`,
@@ -71,7 +93,7 @@ export function bind(root) {
           closeSheet(); toast('Locale creato ✓'); rerender(root);
         };
       });
-  };
+  });
 
   root.querySelectorAll('[data-ren]').forEach(b => b.onclick = () => {
     const l = data.locali.find(x => x.id === b.dataset.ren); if (!l) return;
@@ -103,18 +125,18 @@ export function bind(root) {
   });
 
   // Export: chiede l'intero stato al server (completo).
-  root.querySelector('[data-export]').onclick = async () => {
+  root.querySelector('[data-export]')?.addEventListener('click', async () => {
     let payload;
-    try { const res = await fetch('/api/data?full=1'); payload = res.ok ? await res.text() : null; } catch (e) { payload = null; }
+    try { const res = await authFetch('/api/data?full=1'); payload = res.ok ? await res.text() : null; } catch (e) { payload = null; }
     if (payload == null) payload = JSON.stringify(data);
     const d = new Date().toISOString().slice(0, 10);
     downloadText(`zen-warehouse-backup-${safeFileName(d)}.json`, payload);
     toast('Backup esportato ✓');
-  };
+  });
 
   const impFile = root.querySelector('#impFile');
-  root.querySelector('[data-import]').onclick = () => impFile.click();
-  impFile.onchange = () => {
+  root.querySelector('[data-import]')?.addEventListener('click', () => impFile?.click());
+  if (impFile) impFile.onchange = () => {
     const f = impFile.files[0]; impFile.value = '';
     if (!f) return;
     const r = new FileReader();
@@ -141,11 +163,11 @@ export function bind(root) {
     updStato.innerHTML = txt;
     if (updInstBtn) updInstBtn.style.display = s.disponibile ? '' : 'none';
   };
-  fetch('/api/updates').then(r => r.ok ? r.json() : null).then(showUpd).catch(() => {});
+  authFetch('/api/updates').then(r => r.ok ? r.json() : null).then(showUpd).catch(() => {});
   if (updCheckBtn) updCheckBtn.onclick = async () => {
     updCheckBtn.disabled = true;
     try {
-      const r = await fetch('/api/updates/check', { method: 'POST' });
+      const r = await authFetch('/api/updates/check', { method: 'POST' });
       const s = await r.json();
       if (!r.ok) { toast(s.error || 'Controllo fallito'); return; }
       showUpd(s);
@@ -156,7 +178,7 @@ export function bind(root) {
   if (updInstBtn) updInstBtn.onclick = () => confirmDialog('Installare l\'aggiornamento?', 'Il nuovo software verrà scaricato e installato; il server si riavvia da solo e la pagina si ricarica. I dati non vengono toccati.', 'Installa', async () => {
     updInstBtn.disabled = true;
     try {
-      const r = await fetch('/api/updates/install', { method: 'POST' });
+      const r = await authFetch('/api/updates/install', { method: 'POST' });
       const s = await r.json();
       if (!r.ok) { toast(s.error || 'Installazione fallita'); updInstBtn.disabled = false; return; }
       toast(`Versione ${s.version} installata — riavvio in corso…`);
@@ -172,12 +194,12 @@ export function bind(root) {
     } catch { toast('Installazione fallita'); updInstBtn.disabled = false; }
   });
 
-  root.querySelector('[data-reset]').onclick = () => {
+  root.querySelector('[data-reset]')?.addEventListener('click', () => {
     confirmDialog('Azzerare il database?', 'Tutti i dati vengono cancellati e si riparte da un locale vuoto. Irreversibile (esporta prima un backup).', 'Azzera tutto', async () => {
-      try { await fetch('/api/reset', { method: 'POST' }); } catch (e) {}
+      try { await authFetch('/api/reset', { method: 'POST' }); } catch (e) {}
       await reloadFromServer(); toast('Database azzerato'); rerender(root);
     }, { danger: true });
-  };
+  });
 }
 
 // Scelta Unisci / Sostituisci dopo aver validato il file di backup.
