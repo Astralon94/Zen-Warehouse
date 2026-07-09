@@ -16,7 +16,20 @@ import {
 import { makeSortable } from '../sortable.js';
 import { can } from '../../state/auth.js';
 
-const cManage = () => can('database.manage');   // CRUD anagrafiche gated
+// CRUD anagrafiche gatinato per entità × azione (grana fine)
+const pCrea = () => can('prodotti.crea');
+const pMod = () => can('prodotti.modifica');
+const pDel = () => can('prodotti.elimina');
+const pMass = () => can('prodotti.massiva');
+const catCrea = () => can('categorie.crea');
+const catMod = () => can('categorie.modifica');
+const catDel = () => can('categorie.elimina');
+const supCrea = () => can('fornitori.crea');
+const supMod = () => can('fornitori.modifica');
+const supDel = () => can('fornitori.elimina');
+const dpCrea = () => can('consegne.crea');
+const dpMod = () => can('consegne.modifica');
+const dpDel = () => can('consegne.elimina');
 const HANDLE = '<span class="drag-handle" title="Trascina per riordinare" draggable="false">⋮⋮</span>';
 
 let tab = 'prodotti';        // prodotti | categorie | fornitori | consegne
@@ -75,9 +88,9 @@ function prodottiBody(lid) {
   const chip = (v, label, n) => `<button class="chip ${catFilter === v ? 'on' : ''}" data-cat="${v}">${esc(label)}${n != null ? ' · ' + n : ''}</button>`;
   let h = `<div class="field"><input id="dbq" placeholder="Cerca prodotto o fornitore…" value="${esc(q)}"></div>`;
   h += `<div class="chips" style="margin-bottom:12px">${chip('all', 'Tutti', all.length)}${cats.map(c => chip(c.id, c.name)).join('')}${noneCount ? chip('__none__', 'Senza categoria', noneCount) : ''}</div>`;
-  if (cManage()) h += `<div class="btnrow" style="margin-bottom:12px">
-    <button class="btn primary" data-addprod>+ Prodotto</button>
-    ${all.length ? `<button class="btn${selMode ? ' primary' : ''}" data-selmode>${selMode ? '✓ Fine selezione' : '☑ Seleziona'}</button>` : ''}
+  if (pCrea() || (all.length && pMass())) h += `<div class="btnrow" style="margin-bottom:12px">
+    ${pCrea() ? '<button class="btn primary" data-addprod>+ Prodotto</button>' : ''}
+    ${(all.length && pMass()) ? `<button class="btn${selMode ? ' primary' : ''}" data-selmode>${selMode ? '✓ Fine selezione' : '☑ Seleziona'}</button>` : ''}
   </div>`;
 
   const list = filteredProducts(lid);
@@ -105,8 +118,8 @@ function prodottiBody(lid) {
   const byType = {};
   list.forEach(p => { const k = type(lid, p.typeId) ? p.typeId : '__none__'; (byType[k] = byType[k] || []).push(p); });
 
-  // in modalità selezione niente drag-drop: la lista non è "sortprod"
-  const cardOf = items => `<div class="list${(selMode || !cManage()) ? '' : ' sortprod'}">${items.slice().sort(byOrder).map(p => productRow(lid, p)).join('')}</div>`;
+  // in modalità selezione niente drag-drop: la lista è "sortprod" solo con prodotti.modifica
+  const cardOf = items => `<div class="list${(selMode || !pMod()) ? '' : ' sortprod'}">${items.slice().sort(byOrder).map(p => productRow(lid, p)).join('')}</div>`;
   const section = (title, muted, items) => items.length ? `<div class="section-title" ${muted ? 'style="color:var(--muted)"' : ''}>${esc(title)}</div>${cardOf(items)}` : '';
 
   const out = [];
@@ -143,15 +156,16 @@ function productRow(lid, p) {
       ${mid}
     </div>`;
   }
-  if (!cManage()) return `<div class="row">${mid}</div>`;
-  return `<div class="row" data-sortid="${p.id}">
-    ${HANDLE}
+  const hasActions = pCrea() || pMod() || pDel();
+  if (!pMod() && !hasActions) return `<div class="row">${mid}</div>`;
+  return `<div class="row"${pMod() ? ` data-sortid="${p.id}"` : ''}>
+    ${pMod() ? HANDLE : ''}
     ${mid}
-    <div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
-      <button class="btn sm" data-dup="${p.id}">⎘</button>
-      <button class="btn sm" data-edit="${p.id}">✏️</button>
-      <button class="btn sm danger" data-del="${p.id}">🗑</button>
-    </div>
+    ${hasActions ? `<div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
+      ${pCrea() ? `<button class="btn sm" data-dup="${p.id}">⎘</button>` : ''}
+      ${pMod() ? `<button class="btn sm" data-edit="${p.id}">✏️</button>` : ''}
+      ${pDel() ? `<button class="btn sm danger" data-del="${p.id}">🗑</button>` : ''}
+    </div>` : ''}
   </div>`;
 }
 
@@ -308,7 +322,7 @@ function bulkEditModal(lid, ids) {
 // ---------- CATEGORIE ----------
 function categorieBody(lid) {
   const cats = topTypes(lid);
-  let h = cManage() ? `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addcat>+ Categoria</button></div>` : '';
+  let h = catCrea() ? `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addcat>+ Categoria</button></div>` : '';
   if (!cats.length) return h + `<div class="card empty">Nessuna categoria. Aggiungine una per organizzare i prodotti.</div>`;
   h += `<div class="list">`;
   cats.forEach(c => {
@@ -319,12 +333,12 @@ function categorieBody(lid) {
   return h;
 }
 function rowCat(t, groupSize, isSub) {
-  const actions = cManage() ? `<div style="display:flex;gap:3px;flex-shrink:0">
-      ${!isSub ? `<button class="btn sm" data-addsub="${t.id}">+ sott.</button>` : ''}
-      <button class="btn sm" data-catup="${t.id}" ${groupSize < 2 ? 'disabled' : ''}>↑</button>
+  const actions = (catCrea() || catMod() || catDel()) ? `<div style="display:flex;gap:3px;flex-shrink:0">
+      ${(!isSub && catCrea()) ? `<button class="btn sm" data-addsub="${t.id}">+ sott.</button>` : ''}
+      ${catMod() ? `<button class="btn sm" data-catup="${t.id}" ${groupSize < 2 ? 'disabled' : ''}>↑</button>
       <button class="btn sm" data-catdown="${t.id}" ${groupSize < 2 ? 'disabled' : ''}>↓</button>
-      <button class="btn sm" data-catedit="${t.id}">✏️</button>
-      <button class="btn sm danger" data-catdel="${t.id}">🗑</button>
+      <button class="btn sm" data-catedit="${t.id}">✏️</button>` : ''}
+      ${catDel() ? `<button class="btn sm danger" data-catdel="${t.id}">🗑</button>` : ''}
     </div>` : '';
   return `<div class="row" ${isSub ? 'style="padding-left:22px"' : ''}>
     <div class="emoji">${isSub ? '↳' : '🏷'}</div>
@@ -370,16 +384,17 @@ function typeModal(lid, id, presetParent) {
 // ---------- FORNITORI ----------
 function fornitoriBody(lid) {
   const list = suppliersOf(lid);
-  const ro = !cManage();
-  let h = ro ? '' : `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addsup>+ Fornitore</button></div>`;
+  const sort = supMod();                                  // riordino = fornitori.modifica
+  const hasActions = supMod() || supDel();
+  let h = supCrea() ? `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addsup>+ Fornitore</button></div>` : '';
   if (!list.length) return h + `<div class="card empty">Nessun fornitore.</div>`;
-  h += `<div class="list${ro ? '' : ' sortsup'}">${list.map(s => `<div class="row"${ro ? '' : ` data-sortid="${s.id}"`}>
-    ${ro ? '' : HANDLE}
+  h += `<div class="list${sort ? ' sortsup' : ''}">${list.map(s => `<div class="row"${sort ? ` data-sortid="${s.id}"` : ''}>
+    ${sort ? HANDLE : ''}
     <div class="mid"><div class="t1">🚚 ${esc(s.name)}</div><div class="t2">${[s.phone, s.email].filter(Boolean).map(esc).join(' · ')}${s.note ? ' · ' + esc(s.note) : ''}</div></div>
-    ${ro ? '' : `<div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
-      <button class="btn sm" data-supedit="${s.id}">✏️</button>
-      <button class="btn sm danger" data-supdel="${s.id}">🗑</button>
-    </div>`}</div>`).join('')}</div>`;
+    ${hasActions ? `<div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
+      ${supMod() ? `<button class="btn sm" data-supedit="${s.id}">✏️</button>` : ''}
+      ${supDel() ? `<button class="btn sm danger" data-supdel="${s.id}">🗑</button>` : ''}
+    </div>` : ''}</div>`).join('')}</div>`;
   return h;
 }
 function supplierModal(lid, id) {
@@ -408,16 +423,17 @@ function supplierModal(lid, id) {
 // ---------- PUNTI DI CONSEGNA ----------
 function consegneBody(lid) {
   const list = deliveryPointsOf(lid);
-  const ro = !cManage();
-  let h = ro ? '' : `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-adddp>+ Punto di consegna</button></div>`;
+  const sort = dpMod();                                   // riordino = consegne.modifica
+  const hasActions = dpMod() || dpDel();
+  let h = dpCrea() ? `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-adddp>+ Punto di consegna</button></div>` : '';
   if (!list.length) return h + `<div class="card empty">Nessun punto di consegna.</div>`;
-  h += `<div class="list${ro ? '' : ' sortdp'}">${list.map(d => `<div class="row"${ro ? '' : ` data-sortid="${d.id}"`}>
-    ${ro ? '' : HANDLE}
+  h += `<div class="list${sort ? ' sortdp' : ''}">${list.map(d => `<div class="row"${sort ? ` data-sortid="${d.id}"` : ''}>
+    ${sort ? HANDLE : ''}
     <div class="mid"><div class="t1">📍 ${esc(d.name)}</div><div class="t2">${[d.address, d.contact, d.phone].filter(Boolean).map(esc).join(' · ')}${d.note ? ' · ' + esc(d.note) : ''}</div></div>
-    ${ro ? '' : `<div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
-      <button class="btn sm" data-dpedit="${d.id}">✏️</button>
-      <button class="btn sm danger" data-dpdel="${d.id}">🗑</button>
-    </div>`}</div>`).join('')}</div>`;
+    ${hasActions ? `<div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
+      ${dpMod() ? `<button class="btn sm" data-dpedit="${d.id}">✏️</button>` : ''}
+      ${dpDel() ? `<button class="btn sm danger" data-dpdel="${d.id}">🗑</button>` : ''}
+    </div>` : ''}</div>`).join('')}</div>`;
   return h;
 }
 function deliveryPointModal(lid, id) {

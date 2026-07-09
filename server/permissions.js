@@ -8,42 +8,80 @@
 //    2) la voce in NAV (se ha una schermata)
 //    3) la guardia nell'endpoint in server.js
 //
-//  Modello (Livello A): autenticazione + gating UI + guardia di scrittura
-//  GROSSOLANA sul backend (un solo endpoint dati). Nessun filtraggio del dataset
-//  per utente: tutti gli autenticati caricano lo stato intero (app locale su un Mac).
+//  Modello (Livello A): autenticazione + gating UI a GRANA FINE (una particella per
+//  entità × azione) + guardia di scrittura GROSSOLANA sul backend (un solo endpoint
+//  dati). Nessun filtraggio del dataset per utente: tutti gli autenticati caricano
+//  lo stato intero (app locale su un Mac). La grana fine vive nella UI: ogni
+//  controllo di scrittura è gatinato dal permesso specifico dell'azione.
 //
 //  Regole d'oro:
 //   - Gli utenti con ruolo 'admin' hanno SEMPRE tutti i permessi.
 //   - I permessi con adminOnly:true valgono solo per gli admin (non assegnabili).
 //   - I permessi standard sono "particellari": assegnabili singolarmente.
+//   - `write:true` marca le azioni che scrivono i DATI (collezioni/doc): alimentano
+//     DATA_MANAGE, la guardia grossolana di POST /api/changes.
 // =============================================================================
 
 export const RUOLI = { admin: 'Amministratore', standard: 'Operatore' };
 
 // Catalogo permessi (particellari). `group` serve solo a raggrupparli nella UI.
+// Vocabolario azioni: .view · .crea · .modifica · .elimina · .esporta (+ dominio).
 export const PERMISSIONS = [
-  { key: 'dashboard.view',     group: 'Riepiloghi',     label: 'Vedere la Dashboard' },
-  { key: 'report.view',        group: 'Riepiloghi',     label: 'Vedere i report ed esportarli in PDF' },
+  // ---- Riepiloghi ----
+  { key: 'dashboard.view',        group: 'Riepiloghi',     label: 'Vedere la Dashboard' },
+  { key: 'report.view',          group: 'Riepiloghi',     label: 'Vedere i report' },
+  { key: 'report.esporta',       group: 'Riepiloghi',     label: 'Esportare i report in PDF' },
 
-  { key: 'ordini.view',        group: 'Ordini',         label: 'Vedere Ordine e Storico' },
-  { key: 'ordini.manage',      group: 'Ordini',         label: 'Comporre, inviare, eliminare ordini' },
+  // ---- Ordini (Ordine + Storico) ----
+  { key: 'ordini.view',          group: 'Ordini',         label: 'Vedere Ordine e Storico' },
+  { key: 'ordini.componi',       group: 'Ordini',         label: 'Comporre l\'ordine in corso (quantità e note)', write: true },
+  { key: 'ordini.invia',         group: 'Ordini',         label: 'Generare il PDF e inviare l\'ordine', write: true },
+  { key: 'ordini.elimina',       group: 'Ordini',         label: 'Eliminare ordini dallo storico', write: true },
+  { key: 'ordini.riordina',      group: 'Ordini',         label: 'Ri-ordinare da uno storico', write: true },
 
-  { key: 'magazzino.view',     group: 'Magazzino',      label: 'Consultare le giacenze' },
-  { key: 'magazzino.manage',   group: 'Magazzino',      label: 'Carichi, scarichi, rettifiche, trasferimenti, ricezione merce' },
+  // ---- Magazzino ----
+  { key: 'magazzino.view',       group: 'Magazzino',      label: 'Consultare le giacenze' },
+  { key: 'magazzino.carico',     group: 'Magazzino',      label: 'Registrare carichi', write: true },
+  { key: 'magazzino.scarico',    group: 'Magazzino',      label: 'Registrare scarichi', write: true },
+  { key: 'magazzino.rettifica',  group: 'Magazzino',      label: 'Rettificare le giacenze', write: true },
+  { key: 'magazzino.trasferimento', group: 'Magazzino',   label: 'Trasferire tra magazzini', write: true },
+  { key: 'magazzino.massivo',    group: 'Magazzino',      label: 'Eseguire movimenti massivi', write: true },
+  { key: 'magazzino.ricevi',     group: 'Magazzino',      label: 'Ricevere e caricare da ordini', write: true },
+  { key: 'magazzini.crea',       group: 'Magazzino',      label: 'Creare magazzini', write: true },
+  { key: 'magazzini.modifica',   group: 'Magazzino',      label: 'Rinominare magazzini e categorie ammesse', write: true },
+  { key: 'magazzini.elimina',    group: 'Magazzino',      label: 'Eliminare magazzini', write: true },
 
-  { key: 'database.view',      group: 'Anagrafiche',    label: 'Consultare prodotti, categorie, fornitori, punti di consegna' },
-  { key: 'database.manage',    group: 'Anagrafiche',    label: 'Gestire prodotti, categorie, fornitori, punti di consegna' },
+  // ---- Anagrafiche (Database) ----
+  { key: 'database.view',        group: 'Anagrafiche',    label: 'Consultare le anagrafiche' },
+  { key: 'prodotti.crea',        group: 'Anagrafiche',    label: 'Creare prodotti', write: true },
+  { key: 'prodotti.modifica',    group: 'Anagrafiche',    label: 'Modificare e riordinare i prodotti', write: true },
+  { key: 'prodotti.elimina',     group: 'Anagrafiche',    label: 'Eliminare prodotti', write: true },
+  { key: 'prodotti.massiva',     group: 'Anagrafiche',    label: 'Modificare i prodotti in massa', write: true },
+  { key: 'categorie.crea',       group: 'Anagrafiche',    label: 'Creare categorie e sottocategorie', write: true },
+  { key: 'categorie.modifica',   group: 'Anagrafiche',    label: 'Modificare e riordinare le categorie', write: true },
+  { key: 'categorie.elimina',    group: 'Anagrafiche',    label: 'Eliminare categorie', write: true },
+  { key: 'fornitori.crea',       group: 'Anagrafiche',    label: 'Creare fornitori', write: true },
+  { key: 'fornitori.modifica',   group: 'Anagrafiche',    label: 'Modificare e riordinare i fornitori', write: true },
+  { key: 'fornitori.elimina',    group: 'Anagrafiche',    label: 'Eliminare fornitori', write: true },
+  { key: 'consegne.crea',        group: 'Anagrafiche',    label: 'Creare punti di consegna', write: true },
+  { key: 'consegne.modifica',    group: 'Anagrafiche',    label: 'Modificare e riordinare i punti di consegna', write: true },
+  { key: 'consegne.elimina',     group: 'Anagrafiche',    label: 'Eliminare punti di consegna', write: true },
 
-  { key: 'locali.manage',      group: 'Configurazione', label: 'Gestire i locali' },
-  { key: 'impostazioni.manage', group: 'Configurazione', label: 'Gestire le impostazioni e l\'aggiornamento software' },
-  { key: 'dati.export',        group: 'Configurazione', label: 'Esportare il backup JSON' },
-  { key: 'dati.import',        group: 'Configurazione', label: 'Importare/sostituire i dati (operazione totale)' },
-  { key: 'utenti.manage',      group: 'Configurazione', label: 'Gestire utenti e permessi', adminOnly: true },
+  // ---- Configurazione ----
+  { key: 'locali.crea',          group: 'Configurazione', label: 'Creare locali', write: true },
+  { key: 'locali.modifica',      group: 'Configurazione', label: 'Rinominare locali', write: true },
+  { key: 'locali.elimina',       group: 'Configurazione', label: 'Eliminare locali', write: true },
+  { key: 'impostazioni.manage',  group: 'Configurazione', label: 'Gestire tema e impostazioni' },
+  { key: 'software.aggiorna',    group: 'Configurazione', label: 'Aggiornare il software' },
+  { key: 'dati.export',          group: 'Configurazione', label: 'Esportare il backup JSON' },
+  { key: 'dati.import',          group: 'Configurazione', label: 'Importare/sostituire i dati (operazione totale)' },
+  { key: 'dati.reset',           group: 'Configurazione', label: 'Azzerare il database' },
+  { key: 'utenti.manage',        group: 'Configurazione', label: 'Gestire utenti e permessi', adminOnly: true },
 ];
 
 // Voci di navigazione: ognuna richiede un permesso (`perm`). La voce Impostazioni
 // è raggiungibile con UNO QUALSIASI dei permessi in `any` (contiene sotto-sezioni
-// export/import/locali gestite da permessi distinti).
+// tema/aggiornamento/export/import/reset/locali gestite da permessi distinti).
 export const NAV = [
   { key: 'ord',    icon: '🛒', label: 'Ordine',       perm: 'ordini.view' },
   { key: 'dash',   icon: '📊', label: 'Dashboard',    perm: 'dashboard.view' },
@@ -52,14 +90,16 @@ export const NAV = [
   { key: 'mag',    icon: '🏬', label: 'Magazzino',    perm: 'magazzino.view' },
   { key: 'db',     icon: '📦', label: 'Database',     perm: 'database.view' },
   { key: 'utenti', icon: '👥', label: 'Utenti',       perm: 'utenti.manage' },
-  { key: 'set',    icon: '⚙',  label: 'Impostazioni', perm: 'impostazioni.manage', any: ['impostazioni.manage', 'dati.export', 'dati.import', 'locali.manage'] },
+  { key: 'set',    icon: '⚙',  label: 'Impostazioni', perm: 'impostazioni.manage',
+    any: ['impostazioni.manage', 'software.aggiorna', 'dati.export', 'dati.import', 'dati.reset', 'locali.crea', 'locali.modifica', 'locali.elimina'] },
 ];
 
-// Permessi che abilitano la scrittura dei DATI (collezioni). Servono alla guardia
-// grossolana su POST /api/changes: chi non ne ha nessuno è di sola lettura.
-export const DATA_MANAGE = [
-  'ordini.manage', 'magazzino.manage', 'database.manage', 'locali.manage',
-];
+// Permessi che abilitano la scrittura dei DATI (collezioni). Derivati da `write:true`,
+// così il catalogo resta l'unica fonte di verità. Servono alla guardia grossolana su
+// POST /api/changes: chi non ne ha nessuno è di sola lettura. Include tutte le azioni
+// di ordini/magazzino/magazzini/prodotti/categorie/fornitori/consegne/locali; NON i
+// .view/.esporta né impostazioni/software/dati/utenti.
+export const DATA_MANAGE = PERMISSIONS.filter((p) => p.write).map((p) => p.key);
 
 const PERM_INDEX = new Map(PERMISSIONS.map((p) => [p.key, p]));
 

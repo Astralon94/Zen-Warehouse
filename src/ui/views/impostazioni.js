@@ -7,10 +7,15 @@ import { newLocale } from '../../state/model.js';
 import { activeLocale } from '../../domain/warehouse.js';
 
 export function render() {
-  const cManage = can('impostazioni.manage');   // tema + aggiornamento software
-  const cLocali = can('locali.manage');          // gestione locali
-  const cExport = can('dati.export');            // esporta backup
-  const cImport = can('dati.import');            // importa/sostituisci + azzera
+  const cTheme = can('impostazioni.manage');     // tema + impostazioni
+  const cUpd = can('software.aggiorna');          // aggiornamento software
+  const cLocCrea = can('locali.crea');            // crea locale
+  const cLocMod = can('locali.modifica');         // rinomina locale
+  const cLocDel = can('locali.elimina');          // elimina locale
+  const cLocali = cLocCrea || cLocMod || cLocDel; // mostra la sezione Locali
+  const cExport = can('dati.export');             // esporta backup
+  const cImport = can('dati.import');             // importa/sostituisci
+  const cReset = can('dati.reset');               // azzera database
   const theme = (data.settings && data.settings.theme) || 'auto';
   const themeBtn = (v, label) => `<button class="chip ${theme === v ? 'on' : ''}" data-theme="${v}">${label}</button>`;
 
@@ -18,23 +23,23 @@ export function render() {
   let any = false;   // qualche sezione operativa mostrata?
 
   // Tema
-  if (cManage) {
+  if (cTheme) {
     any = true;
     h += `<div class="section-title">Tema</div>
       <div class="chips" style="margin-bottom:16px">${themeBtn('auto', 'Auto')}${themeBtn('light', 'Chiaro')}${themeBtn('dark', 'Scuro')}</div>`;
   }
 
-  // Locali
+  // Locali (crea/rinomina/elimina gatinati separatamente)
   if (cLocali) {
     any = true;
     h += `<div class="section-title">Locali</div><div class="list">`;
     h += data.locali.map(l => `<div class="row">
         <div class="emoji">${esc(l.emoji || '📦')}</div>
         <div class="mid"><div class="t1">${esc(l.name)}${l.id === activeLocale() ? ' <span class="badge">attivo</span>' : ''}</div></div>
-        <button class="btn sm" data-ren="${l.id}">Rinomina</button>
-        ${data.locali.length > 1 ? `<button class="btn sm danger" data-dell="${l.id}">Elimina</button>` : ''}
+        ${cLocMod ? `<button class="btn sm" data-ren="${l.id}">Rinomina</button>` : ''}
+        ${(cLocDel && data.locali.length > 1) ? `<button class="btn sm danger" data-dell="${l.id}">Elimina</button>` : ''}
       </div>`).join('');
-    h += `</div><div class="btnrow" style="margin:10px 0 18px"><button class="btn" data-newloc>+ Nuovo locale</button></div>`;
+    h += `</div>${cLocCrea ? `<div class="btnrow" style="margin:10px 0 18px"><button class="btn" data-newloc>+ Nuovo locale</button></div>` : '<div style="margin-bottom:18px"></div>'}`;
   }
 
   // Backup
@@ -49,7 +54,7 @@ export function render() {
   }
 
   // Aggiornamento software
-  if (cManage) {
+  if (cUpd) {
     any = true;
     h += `<div class="section-title">Aggiornamento software</div>
       <div class="card">
@@ -63,7 +68,7 @@ export function render() {
   }
 
   // Zona pericolo
-  if (cImport) {
+  if (cReset) {
     any = true;
     h += `<div class="section-title">Zona pericolo</div>
       <div class="btnrow"><button class="btn danger" data-reset>Azzera database</button></div>`;

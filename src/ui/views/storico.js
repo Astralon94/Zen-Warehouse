@@ -78,9 +78,9 @@ function openOrder(id) {
     ${groupsHtml}
     <div class="btnrow" style="margin-top:14px">
       <button class="btn primary" data-reprint>⤓ Rigenera PDF</button>
-      ${can('ordini.manage') ? '<button class="btn" data-reorder>↻ Ri-ordina</button>' : ''}
-      ${(o.status === 'received' || o.status === 'closed' || !can('magazzino.manage')) ? '' : '<button class="btn" data-receive>📥 Ricevi (carico)</button>'}
-      ${can('ordini.manage') ? '<button class="btn danger" data-del>Elimina</button>' : ''}
+      ${can('ordini.riordina') ? '<button class="btn" data-reorder>↻ Ri-ordina</button>' : ''}
+      ${(o.status === 'received' || o.status === 'closed' || !can('magazzino.ricevi')) ? '' : '<button class="btn" data-receive>📥 Ricevi (carico)</button>'}
+      ${can('ordini.elimina') ? '<button class="btn danger" data-del>Elimina</button>' : ''}
     </div>`,
     sheet => {
       sheet.querySelector('[data-receive]')?.addEventListener('click', () => {

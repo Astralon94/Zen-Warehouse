@@ -43,22 +43,24 @@ export function render() {
 
   h += `<div style="padding-bottom:88px">${body}</div>`;
 
-  // barra fissa in basso: note per fornitore (se ci sono righe) + azioni. Solo con ordini.manage:
-  // un utente in sola lettura vede le quantità in corso ma non compone/invia.
+  // barra fissa in basso: note per fornitore (comporre → ordini.componi) + invio (ordini.invia).
+  // Un utente in sola lettura vede le quantità in corso ma non compone/invia. Le due azioni
+  // sono particellari: chi ha solo `componi` prepara l'ordine, chi ha `invia` lo genera in PDF.
   const t = orderTotals(lid);
-  if (canManage()) {
+  if (canCompose() || canSend()) {
     h += `<div id="orderbar" style="position:fixed;left:0;right:0;bottom:0;background:var(--card,var(--surface));border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom,0));z-index:20;max-width:900px;margin:0 auto">
-      ${noteButtonsRow(lid)}
+      ${canCompose() ? noteButtonsRow(lid) : ''}
       <div style="display:flex;gap:10px">
-        ${t.righe ? `<button class="btn" data-clear>Svuota</button>` : ''}
-        <button class="btn primary" style="flex:1" data-gen ${t.righe ? '' : 'disabled'}>${t.righe ? `📄 Genera PDF · ${t.righe} prodotti · ${t.pezzi} pz` : 'Inserisci le quantità'}</button>
+        ${canCompose() && t.righe ? `<button class="btn" data-clear>Svuota</button>` : ''}
+        ${canSend() ? `<button class="btn primary" style="flex:1" data-gen ${t.righe ? '' : 'disabled'}>${t.righe ? `📄 Genera PDF · ${t.righe} prodotti · ${t.pezzi} pz` : 'Inserisci le quantità'}</button>` : ''}
       </div>
     </div>`;
   }
   return h;
 }
 
-const canManage = () => can('ordini.manage');
+const canCompose = () => can('ordini.componi');   // stepper quantità, svuota, nota fornitore
+const canSend = () => can('ordini.invia');         // genera PDF + invia a storico
 
 // Fornitori con prodotti attivi nell'ordine in corso (chiave '__none__' = senza fornitore),
 // nell'ordine di prima apparizione delle righe.
@@ -84,8 +86,8 @@ function noteButtonsRow(lid) {
 
 function orderRow(lid, p) {
   const qty = orderQty(lid, p.id);
-  // Sola lettura (senza ordini.manage): mostra la quantità in corso senza stepper editabile.
-  const control = canManage()
+  // Sola lettura (senza ordini.componi): mostra la quantità in corso senza stepper editabile.
+  const control = canCompose()
     ? `<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
       <button class="btn sm" data-minus="${p.id}">−</button>
       <input class="qtyinp" data-qty="${p.id}" type="number" min="0" inputmode="numeric" value="${qty}" style="width:56px;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg,var(--surface));color:var(--txt)">
@@ -105,7 +107,7 @@ export function bind(root) {
 
   root.querySelector('[data-godb]')?.addEventListener('click', () => go('db'));
 
-  if (!canManage()) return;   // sola lettura: nessun handler di composizione/invio
+  if (!canCompose() && !canSend()) return;   // sola lettura: nessun handler di composizione/invio
 
   // aggiornamento parziale (niente re-render completo a ogni tap)
   const updateRow = pid => {
@@ -122,16 +124,21 @@ export function bind(root) {
     const t = orderTotals(lid);
     const bar = root.querySelector('#orderbar');
     if (!bar) return;
-    const gen = bar.querySelector('[data-gen]');
-    gen.disabled = t.righe === 0;
-    gen.innerHTML = t.righe ? `📄 Genera PDF · ${t.righe} prodotti · ${t.pezzi} pz` : 'Inserisci le quantità';
-    // mostra/nascondi "Svuota" senza rerender completo
-    let clr = bar.querySelector('[data-clear]');
-    if (t.righe && !clr) { gen.parentElement.insertAdjacentHTML('afterbegin', `<button class="btn" data-clear>Svuota</button>`); bindClear(); }
-    else if (!t.righe && clr) clr.remove();
-    // ricostruisci i pulsanti "Nota" (i fornitori attivi possono cambiare a ogni tap)
-    const notes = root.querySelector('#note-btns');
-    if (notes) { notes.outerHTML = noteButtonsRow(lid); bindNotes(); }
+    const gen = bar.querySelector('[data-gen]');   // presente solo con ordini.invia
+    if (gen) {
+      gen.disabled = t.righe === 0;
+      gen.innerHTML = t.righe ? `📄 Genera PDF · ${t.righe} prodotti · ${t.pezzi} pz` : 'Inserisci le quantità';
+    }
+    // mostra/nascondi "Svuota" senza rerender completo (solo con ordini.componi)
+    if (canCompose()) {
+      const actions = bar.querySelector('div[style*="display:flex"]');
+      let clr = bar.querySelector('[data-clear]');
+      if (t.righe && !clr && actions) { actions.insertAdjacentHTML('afterbegin', `<button class="btn" data-clear>Svuota</button>`); bindClear(); }
+      else if (!t.righe && clr) clr.remove();
+      // ricostruisci i pulsanti "Nota" (i fornitori attivi possono cambiare a ogni tap)
+      const notes = root.querySelector('#note-btns');
+      if (notes) { notes.outerHTML = noteButtonsRow(lid); bindNotes(); }
+    }
   };
   const bindClear = () => {
     root.querySelector('[data-clear]')?.addEventListener('click', () => {
@@ -142,13 +149,15 @@ export function bind(root) {
     root.querySelectorAll('[data-note]').forEach(b => b.onclick = () => openNoteSheet(lid, b.dataset.note, updateBar));
   };
 
-  root.querySelectorAll('[data-minus]').forEach(b => b.onclick = () => { addQty(lid, b.dataset.minus, -1); updateRow(b.dataset.minus); });
-  root.querySelectorAll('[data-plus]').forEach(b => b.onclick = () => { addQty(lid, b.dataset.plus, +1); updateRow(b.dataset.plus); });
-  root.querySelectorAll('[data-qty]').forEach(inp => inp.onchange = () => { setQty(lid, inp.dataset.qty, inp.value); updateRow(inp.dataset.qty); });
-  bindClear();
-  bindNotes();
+  if (canCompose()) {
+    root.querySelectorAll('[data-minus]').forEach(b => b.onclick = () => { addQty(lid, b.dataset.minus, -1); updateRow(b.dataset.minus); });
+    root.querySelectorAll('[data-plus]').forEach(b => b.onclick = () => { addQty(lid, b.dataset.plus, +1); updateRow(b.dataset.plus); });
+    root.querySelectorAll('[data-qty]').forEach(inp => inp.onchange = () => { setQty(lid, inp.dataset.qty, inp.value); updateRow(inp.dataset.qty); });
+    bindClear();
+    bindNotes();
+  }
 
-  root.querySelector('[data-gen]')?.addEventListener('click', () => startGenerate(lid, rerender));
+  if (canSend()) root.querySelector('[data-gen]')?.addEventListener('click', () => startGenerate(lid, rerender));
 }
 
 // Editor della nota "permanente" di un fornitore (chiave '__none__' = senza fornitore).

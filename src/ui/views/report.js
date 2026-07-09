@@ -5,6 +5,7 @@ import { esc } from '../../domain/util.js';
 import { printDocument, toast } from '../dom.js';
 import { activeLocale, activeLocaleObj, ordersOf, suppliersOf } from '../../domain/warehouse.js';
 import { reportData, reportCategories, monthLabel } from '../../domain/report.js';
+import { can } from '../../state/auth.js';
 
 // Stato filtri (persistente tra i re-render della sessione)
 const F = { period: 'all', from: '', to: '', supplierId: '', categoryId: '' };
@@ -174,7 +175,7 @@ export function render() {
   const maxS = r.bySupplier[0]?.pieces || 0;
   h += `<div class="section-title" style="margin-top:16px">Volumi per fornitore</div><div class="card">${r.bySupplier.map(s => bar(s.name, s.pieces, maxS, `pz · ${s.ordini} ord.`)).join('')}</div>`;
 
-  h += `<div class="btnrow" style="margin-top:16px"><button class="btn" data-export>⤓ Esporta report PDF</button></div>`;
+  if (can('report.esporta')) h += `<div class="btnrow" style="margin-top:16px"><button class="btn" data-export>⤓ Esporta report PDF</button></div>`;
   return h;
 }
 

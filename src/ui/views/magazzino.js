@@ -17,7 +17,18 @@ import { generateMovementSlip } from '../../domain/orderpdf.js';
 import { can } from '../../state/auth.js';
 import { makeSortable } from '../sortable.js';
 
-const cManage = () => can('magazzino.manage');   // scritture scorte gated
+// scritture scorte gatinate per azione (grana fine)
+const cIn = () => can('magazzino.carico');
+const cOut = () => can('magazzino.scarico');
+const cAdj = () => can('magazzino.rettifica');
+const cTransfer = () => can('magazzino.trasferimento');
+const cBatch = () => can('magazzino.massivo');
+const cReceive = () => can('magazzino.ricevi');
+const cWhCrea = () => can('magazzini.crea');
+const cWhMod = () => can('magazzini.modifica');
+const cWhDel = () => can('magazzini.elimina');
+const cWhManage = () => cWhCrea() || cWhMod() || cWhDel();   // apre la gestione magazzini
+const cMove = () => cIn() || cOut();                          // pulsanti carico/scarico in riga
 
 let q = '';
 let filter = 'all';    // all | low | out
@@ -51,10 +62,10 @@ export function render() {
   h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
     <div class="chips" style="margin:0">${whChip('all', 'Tutti i magazzini')}${whs.map(w => whChip(w.id, w.name)).join('')}</div>
     <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap">
-      ${cManage() ? `<button class="btn sm primary" data-receipts>📥 Carico da ordini${pendBadge}</button>
-      <button class="btn sm" data-batch>⇅ Movimento massivo</button>` : ''}
+      ${cReceive() ? `<button class="btn sm primary" data-receipts>📥 Carico da ordini${pendBadge}</button>` : ''}
+      ${cBatch() ? '<button class="btn sm" data-batch>⇅ Movimento massivo</button>' : ''}
       <button class="btn sm" data-schede>🧾 Schede</button>
-      ${cManage() ? '<button class="btn sm" data-managewh>⚙︎ Gestisci magazzini</button>' : ''}
+      ${cWhManage() ? '<button class="btn sm" data-managewh>⚙︎ Gestisci magazzini</button>' : ''}
     </div>
   </div>`;
 
@@ -90,9 +101,9 @@ export function render() {
     <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
       <div class="t2">${esc(supplierName(p.supplierId))}${outOfCat(p) ? ' · <span class="badge line" style="font-size:9px">fuori categoria</span>' : ''}${scope !== 'all' && whs.length > 1 ? ` · <span class="muted">tot ${totalStock(p)}</span>` : ''}</div></div>
     ${badge(p)}
-    ${cManage() ? `<div style="display:flex;gap:3px;flex-shrink:0;margin-left:8px">
-      <button class="btn sm danger" data-out="${p.id}">− Scarico</button>
-      <button class="btn sm primary" data-in="${p.id}">+ Carico</button>
+    ${cMove() ? `<div style="display:flex;gap:3px;flex-shrink:0;margin-left:8px">
+      ${cOut() ? `<button class="btn sm danger" data-out="${p.id}">− Scarico</button>` : ''}
+      ${cIn() ? `<button class="btn sm primary" data-in="${p.id}">+ Carico</button>` : ''}
     </div>` : ''}
   </div>`).join('')}</div>`;
   return h;
@@ -204,11 +215,11 @@ function openProduct(id, after) {
   openSheet(`
     <h2>${esc(p.name)}</h2>
     <div class="sheetsub">Giacenza totale <b>${totalStock(p)}</b>${(p.minStock || 0) > 0 ? ` · soglia minima ${p.minStock}` : ''} · ${esc(supplierName(p.supplierId))}</div>
-    ${cManage() ? `<div class="btnrow" style="margin:6px 0 14px">
-      <button class="btn primary" data-in>➕ Carico</button>
-      <button class="btn danger" data-out>➖ Scarico</button>
-      ${whs.length > 1 ? '<button class="btn" data-transfer>↔ Trasferisci</button>' : ''}
-      <button class="btn" data-adj>✎ Rettifica</button>
+    ${(cIn() || cOut() || cAdj() || (cTransfer() && whs.length > 1)) ? `<div class="btnrow" style="margin:6px 0 14px">
+      ${cIn() ? '<button class="btn primary" data-in>➕ Carico</button>' : ''}
+      ${cOut() ? '<button class="btn danger" data-out>➖ Scarico</button>' : ''}
+      ${(cTransfer() && whs.length > 1) ? '<button class="btn" data-transfer>↔ Trasferisci</button>' : ''}
+      ${cAdj() ? '<button class="btn" data-adj>✎ Rettifica</button>' : ''}
     </div>` : ''}
     <div class="section-title">Giacenza per magazzino</div>
     ${breakdown}
@@ -251,25 +262,26 @@ function warehouseTypesLabel(lid, w) {
 function manageWarehouses(lid, after) {
   const whs = warehousesOf(lid);
   const HANDLE = '<span class="drag-handle" title="Trascina per riordinare" draggable="false">⋮⋮</span>';
+  const canSort = cWhMod();   // riordino magazzini = magazzini.modifica
   openSheet(`
     <h2>Gestisci magazzini</h2>
-    <div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addwh>+ Magazzino</button></div>
-    <div class="list sortwh">${whs.map(w => `<div class="row" data-sortid="${w.id}">
-      ${HANDLE}
+    ${cWhCrea() ? '<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-addwh>+ Magazzino</button></div>' : ''}
+    <div class="list${canSort ? ' sortwh' : ''}">${whs.map(w => `<div class="row"${canSort ? ` data-sortid="${w.id}"` : ''}>
+      ${canSort ? HANDLE : ''}
       <div class="mid"><div class="t1">🏬 ${esc(w.name)}</div><div class="t2 muted">${esc(warehouseTypesLabel(lid, w))}</div></div>
       <div style="display:flex;gap:3px;flex-shrink:0" draggable="false">
-        <button class="btn sm" data-whtypes="${w.id}" title="Categorie ammesse">🏷</button>
-        <button class="btn sm" data-whedit="${w.id}" title="Rinomina">✏️</button>
-        <button class="btn sm danger" data-whdel="${w.id}" ${whs.length <= 1 ? 'disabled' : ''}>🗑</button>
+        ${cWhMod() ? `<button class="btn sm" data-whtypes="${w.id}" title="Categorie ammesse">🏷</button>
+        <button class="btn sm" data-whedit="${w.id}" title="Rinomina">✏️</button>` : ''}
+        ${cWhDel() ? `<button class="btn sm danger" data-whdel="${w.id}" ${whs.length <= 1 ? 'disabled' : ''}>🗑</button>` : ''}
       </div></div>`).join('')}</div>
     <div class="actions"><button class="btn primary" data-close>Fatto</button></div>`,
     sheet => {
       const reopen = () => manageWarehouses(lid, after);
       sheet.querySelector('[data-close]').onclick = () => { closeSheet(); after && after(); };
-      sheet.querySelector('[data-addwh]').onclick = () => nameModal(lid, null, reopen);
+      sheet.querySelector('[data-addwh]')?.addEventListener('click', () => nameModal(lid, null, reopen));
       sheet.querySelectorAll('[data-whedit]').forEach(b => b.onclick = () => nameModal(lid, b.dataset.whedit, reopen));
       sheet.querySelectorAll('[data-whtypes]').forEach(b => b.onclick = () => warehouseTypesModal(lid, b.dataset.whtypes, reopen));
-      sheet.querySelector('.sortwh') && makeSortable(sheet.querySelector('.sortwh'), ids => reorderWarehouses(lid, ids));
+      if (canSort && sheet.querySelector('.sortwh')) makeSortable(sheet.querySelector('.sortwh'), ids => reorderWarehouses(lid, ids));
       sheet.querySelectorAll('[data-whdel]').forEach(b => b.onclick = () => {
         const w = warehouse(lid, b.dataset.whdel);
         confirmDialog('Eliminare il magazzino?', `${w?.name || ''} — la giacenza viene spostata nel primo magazzino rimasto.`, 'Elimina', () => {
