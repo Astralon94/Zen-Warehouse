@@ -8,7 +8,7 @@ import { esc, fmtEur, parseMoney } from '../domain/util.js';
 import { FORMATS } from '../state/model.js';
 import { openSheet, closeSheet, toast } from './dom.js';
 import { can } from '../state/auth.js';
-import { productsOf, suppliersOf, topTypes, subTypes, deliveryPointsOf } from '../domain/warehouse.js';
+import { productsOf, suppliersOf, topTypes, subTypes } from '../domain/warehouse.js';
 import { addProduct, addSupplier } from '../domain/catalog.js';
 import { parseFatturaPA } from '../importers/fatturapa.js';
 import { extractXmlFromP7m } from '../importers/p7m.js';
@@ -130,8 +130,8 @@ function newSupField(cedName) {
 function productStep(lid, line, ctx) {
   const existing = findExisting(lid, line.desc, ctx.supplierId);
   const catOpts = '<option value="">— Nessuna —</option>' + topTypes(lid).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
-  const dps = deliveryPointsOf(lid);
-  const dpOpts = dps.length ? `<div class="field"><label>Punto di consegna</label><select id="i_dp"><option value="">— Nessuno —</option>${dps.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div>` : '';
+  // NB: niente selettore "punto di consegna": nel modello attuale il punto di consegna si
+  // sceglie PER ORDINE (schermata Ordine); il campo prodotto è vestigiale e nessuno lo legge.
   const priceStr = line.price ? String(line.price).replace('.', ',') : '';
 
   return sheetChoice(`
@@ -144,7 +144,6 @@ function productStep(lid, line, ctx) {
       <div class="field"><label>Categoria</label><select id="i_cat">${catOpts}</select></div>
     </div>
     <div id="i_subslot"></div>
-    ${dpOpts}
     <div class="field"><label>Prezzo di acquisto (€)</label><input id="i_price" inputmode="decimal" value="${esc(priceStr)}" placeholder="0,00"></div>
     <div class="field"><label>Note</label><input id="i_notes" value="" placeholder="Note opzionali…"></div>
     <div class="actions">
@@ -166,7 +165,6 @@ function productStep(lid, line, ctx) {
         addProduct(lid, {
           name, format: g('#i_fmt').value, typeId: subV || catV || null,
           supplierId: ctx.supplierId || null,
-          deliveryPointId: g('#i_dp') ? (g('#i_dp').value || null) : null,
           notes: g('#i_notes').value.trim(),
           price: parseMoney(g('#i_price').value),
         });
