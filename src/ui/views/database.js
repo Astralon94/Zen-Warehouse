@@ -1,8 +1,9 @@
 // ============ Vista Database: prodotti, categorie, fornitori, punti di consegna ============
 import { data, save } from '../../state/store.js';
-import { esc } from '../../domain/util.js';
+import { esc, fmtEur, parseMoney } from '../../domain/util.js';
 import { FORMATS } from '../../state/model.js';
 import { openSheet, closeSheet, toast, confirmDialog } from '../dom.js';
+import { importProductsFromInvoice } from '../invoice-import.js';
 import {
   activeLocale, activeLocaleObj, productsOf, suppliersOf, supplierName,
   topTypes, subTypes, hasSubtypes, type, typeName, deliveryPointsOf, totalStock,
@@ -18,6 +19,7 @@ import { can } from '../../state/auth.js';
 
 // CRUD anagrafiche gatinato per entità × azione (grana fine)
 const pCrea = () => can('prodotti.crea');
+const pImport = () => can('prodotti.importa');
 const pMod = () => can('prodotti.modifica');
 const pDel = () => can('prodotti.elimina');
 const pMass = () => can('prodotti.massiva');
@@ -88,10 +90,12 @@ function prodottiBody(lid) {
   const chip = (v, label, n) => `<button class="chip ${catFilter === v ? 'on' : ''}" data-cat="${v}">${esc(label)}${n != null ? ' · ' + n : ''}</button>`;
   let h = `<div class="field"><input id="dbq" placeholder="Cerca prodotto o fornitore…" value="${esc(q)}"></div>`;
   h += `<div class="chips" style="margin-bottom:12px">${chip('all', 'Tutti', all.length)}${cats.map(c => chip(c.id, c.name)).join('')}${noneCount ? chip('__none__', 'Senza categoria', noneCount) : ''}</div>`;
-  if (pCrea() || (all.length && pMass())) h += `<div class="btnrow" style="margin-bottom:12px">
+  if (pCrea() || pImport() || (all.length && pMass())) h += `<div class="btnrow" style="margin-bottom:12px">
     ${pCrea() ? '<button class="btn primary" data-addprod>+ Prodotto</button>' : ''}
+    ${pImport() ? '<button class="btn" data-impxml>📄 Importa da fattura (XML)…</button>' : ''}
     ${(all.length && pMass()) ? `<button class="btn${selMode ? ' primary' : ''}" data-selmode>${selMode ? '✓ Fine selezione' : '☑ Seleziona'}</button>` : ''}
   </div>`;
+  if (pImport()) h += `<input type="file" id="impxml_input" accept=".xml,.p7m,application/xml,text/xml" multiple style="display:none">`;
 
   const list = filteredProducts(lid);
 
@@ -146,8 +150,9 @@ function productRow(lid, p) {
   const low = (p.minStock || 0) > 0 && tot <= (p.minStock || 0);
   const stockInfo = (p.minStock || 0) > 0 || tot > 0
     ? `<span style="font-size:11px;color:${low ? 'var(--red,#c2685f)' : 'var(--muted)'}">· scorta ${tot}${p.minStock ? '/' + p.minStock : ''}${low ? ' ⚠️' : ''}</span>` : '';
+  const priceInfo = (p.price || 0) > 0 ? `<span class="tnum" style="font-size:11px;color:var(--muted)">· ${fmtEur(p.price)}</span>` : '';
   const mid = `<div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}</div>
-      <div class="t2">${esc(supplierName(p.supplierId))}${p.notes ? ' · ' + esc(p.notes) : ''} ${stockInfo}</div></div>`;
+      <div class="t2">${esc(supplierName(p.supplierId))} ${priceInfo}${p.notes ? ' · ' + esc(p.notes) : ''} ${stockInfo}</div></div>`;
   // riga in modalità selezione: checkbox al posto del drag handle, senza pulsanti d'azione
   if (selMode) {
     const on = selected.has(p.id);
@@ -191,8 +196,12 @@ function productModal(lid, id, prefill) {
     </div>
     <div id="p_subslot">${subcatField(lid, catId, subId)}</div>
     <div class="field"><label>Fornitore</label><select id="p_sup">${suppOpts}</select></div>
-    <div class="field"><label>Soglia minima</label><input id="p_min" inputmode="numeric" value="${p?.minStock ?? ''}" placeholder="0">
-      <div class="muted" style="font-size:12px;margin-top:4px">Avviso sotto scorta sul totale tra i magazzini. La giacenza si gestisce in Magazzino.</div></div>
+    <div class="frow">
+      <div class="field"><label>Prezzo di acquisto (€)</label><input id="p_price" inputmode="decimal" value="${src.price ? String(src.price).replace('.', ',') : ''}" placeholder="0,00">
+        <div class="muted" style="font-size:12px;margin-top:4px">Per unità di formato. Base della spesa nei report.</div></div>
+      <div class="field"><label>Soglia minima</label><input id="p_min" inputmode="numeric" value="${p?.minStock ?? ''}" placeholder="0">
+        <div class="muted" style="font-size:12px;margin-top:4px">Avviso sotto scorta sul totale tra i magazzini.</div></div>
+    </div>
     <div class="field"><label>Note</label><input id="p_notes" value="${esc(p?.notes || '')}" placeholder="Note opzionali…"></div>
     <div class="actions">
       <button class="btn" data-cancel>Annulla</button>
@@ -212,6 +221,7 @@ function productModal(lid, id, prefill) {
           name, format: g('#p_fmt').value, typeId: subV || catV || null,
           supplierId: g('#p_sup').value || null, notes: g('#p_notes').value.trim(),
           minStock: parseInt(g('#p_min').value, 10) || 0,
+          price: parseMoney(g('#p_price').value),
         };
       };
       g('[data-cancel]').onclick = closeSheet;
@@ -270,9 +280,15 @@ function bulkEditModal(lid, ids) {
     </div>
     <div id="b_subslot"></div>
     <div class="field"><label>Fornitore</label><select id="b_sup">${supOpts}</select></div>
-    <div class="field">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="b_minchk" class="selchk"> Imposta soglia minima</label>
-      <input id="b_min" inputmode="numeric" placeholder="0" disabled style="margin-top:6px">
+    <div class="frow">
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="b_pricechk" class="selchk"> Imposta prezzo (€)</label>
+        <input id="b_price" inputmode="decimal" placeholder="0,00" disabled style="margin-top:6px">
+      </div>
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="b_minchk" class="selchk"> Imposta soglia minima</label>
+        <input id="b_min" inputmode="numeric" placeholder="0" disabled style="margin-top:6px">
+      </div>
     </div>
     <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Applica</button></div>`,
     sheet => {
@@ -284,6 +300,8 @@ function bulkEditModal(lid, ids) {
       };
       const minChk = g('#b_minchk'), minInp = g('#b_min');
       minChk.onchange = () => { minInp.disabled = !minChk.checked; if (minChk.checked) minInp.focus(); };
+      const priceChk = g('#b_pricechk'), priceInp = g('#b_price');
+      priceChk.onchange = () => { priceInp.disabled = !priceChk.checked; if (priceChk.checked) priceInp.focus(); };
       g('[data-cancel]').onclick = closeSheet;
       g('[data-ok]').onclick = () => {
         const patch = {};
@@ -297,6 +315,7 @@ function bulkEditModal(lid, ids) {
         const supV = g('#b_sup').value;
         if (supV !== BULK_KEEP) patch.supplierId = supV === BULK_CLEAR ? null : supV;
         if (minChk.checked) patch.minStock = parseInt(minInp.value, 10) || 0;
+        if (priceChk.checked) patch.price = parseMoney(priceInp.value);
 
         if (!Object.keys(patch).length) { toast('Nessuna modifica selezionata'); return; }
 
@@ -306,6 +325,7 @@ function bulkEditModal(lid, ids) {
         if ('typeId' in patch) parts.push('categoria → ' + (patch.typeId ? typeName(lid, patch.typeId) : 'nessuna'));
         if ('supplierId' in patch) parts.push('fornitore → ' + (patch.supplierId ? supplierName(patch.supplierId) : 'nessuno'));
         if ('minStock' in patch) parts.push('soglia minima → ' + patch.minStock);
+        if ('price' in patch) parts.push('prezzo → ' + fmtEur(patch.price));
 
         closeSheet();
         confirmDialog(`Applicare a ${ids.length} prodott${ids.length === 1 ? 'o' : 'i'}?`, parts.join(' · '), 'Applica', () => {
@@ -472,6 +492,13 @@ export function bind(root) {
   if (qi) qi.oninput = () => { q = qi.value; const pos = qi.selectionStart; rerender(); const n = root.querySelector('#dbq'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
   root.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { catFilter = b.dataset.cat; rerender(); });
   root.querySelector('[data-addprod]')?.addEventListener('click', () => productModal(lid, null, null));
+  const impInput = root.querySelector('#impxml_input');
+  root.querySelector('[data-impxml]')?.addEventListener('click', () => impInput?.click());
+  impInput?.addEventListener('change', () => {
+    const files = [...(impInput.files || [])];
+    impInput.value = ''; // consente di riselezionare lo stesso file
+    if (files.length) importProductsFromInvoice(lid, files, rerender);
+  });
   root.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => productModal(lid, b.dataset.edit, null));
   root.querySelectorAll('[data-dup]').forEach(b => b.onclick = () => { duplicateProduct(b.dataset.dup); toast('Duplicato ✓'); rerender(); });
   root.querySelectorAll('.sortprod').forEach(el => makeSortable(el, ids => reorderProducts(ids)));

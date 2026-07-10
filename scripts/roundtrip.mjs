@@ -35,9 +35,9 @@ const sample = {
     { id: 'sup2', localeId: 'loc1', name: 'Ortofrutta Bio', contact: '', phone: '', email: '', address: '', note: 'bio certificato', order: 1 },
   ],
   products: [
-    { id: 'prod1', localeId: 'loc1', name: 'Barolo DOCG', typeId: 'ty-vin', supplierId: 'sup1', deliveryPointId: 'dp1', format: 'Bt', unit: '', notes: 'annata 2019', order: 0, stockByWh: { wh1: 8, wh2: 4 }, minStock: 6 },
-    { id: 'prod2', localeId: 'loc1', name: 'Pomodori', typeId: 'ty-food', supplierId: 'sup2', deliveryPointId: null, format: 'Kg', unit: '', notes: '', order: 1, stockByWh: {}, minStock: 5 },
-    { id: 'prod3', localeId: 'loc1', name: 'Sale', typeId: null, supplierId: null, deliveryPointId: null, format: 'Cf', unit: '', notes: '', order: 2, stockByWh: { wh1: 3 }, minStock: 0 },
+    { id: 'prod1', localeId: 'loc1', name: 'Barolo DOCG', typeId: 'ty-vin', supplierId: 'sup1', deliveryPointId: 'dp1', format: 'Bt', unit: '', notes: 'annata 2019', order: 0, stockByWh: { wh1: 8, wh2: 4 }, minStock: 6, price: 12.5 },
+    { id: 'prod2', localeId: 'loc1', name: 'Pomodori', typeId: 'ty-food', supplierId: 'sup2', deliveryPointId: null, format: 'Kg', unit: '', notes: '', order: 1, stockByWh: {}, minStock: 5, price: 2.4 },
+    { id: 'prod3', localeId: 'loc1', name: 'Sale', typeId: null, supplierId: null, deliveryPointId: null, format: 'Cf', unit: '', notes: '', order: 2, stockByWh: { wh1: 3 }, minStock: 0, price: 0 },
   ],
   orders: [{
     id: 'ord1', localeId: 'loc1', createdAt: 100, sentAt: 100, status: 'sent',
@@ -46,9 +46,9 @@ const sample = {
     receivedSuppliers: { 'sup1': 1720000000000 }, // ricezione per-fornitore: sup1 già ricevuto, sup2/__none__ pendenti
     dismissedSuppliers: { '__none__': 1720000100000 }, // slice-fornitore scartata (non ricevuta, nessun carico)
     lines: [
-      { productId: 'prod1', name: 'Barolo DOCG', qty: 6, format: 'Bt', supplierId: 'sup1', supplierName: 'Cantina Rossi', notes: 'annata 2019' },
-      { productId: 'prod2', name: 'Pomodori', qty: 10, format: 'Kg', supplierId: 'sup2', supplierName: 'Ortofrutta Bio', notes: '' },
-      { productId: 'prod3', name: 'Sale', qty: 2, format: 'Cf', supplierId: null, supplierName: null, notes: '' },
+      { productId: 'prod1', name: 'Barolo DOCG', qty: 6, format: 'Bt', supplierId: 'sup1', supplierName: 'Cantina Rossi', notes: 'annata 2019', price: 12.5 },
+      { productId: 'prod2', name: 'Pomodori', qty: 10, format: 'Kg', supplierId: 'sup2', supplierName: 'Ortofrutta Bio', notes: '', price: 2.4 },
+      { productId: 'prod3', name: 'Sale', qty: 2, format: 'Cf', supplierId: null, supplierName: null, notes: '', price: 0 },
     ],
   }],
   stockMoves: [

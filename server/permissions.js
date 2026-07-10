@@ -57,6 +57,7 @@ export const PERMISSIONS = [
   { key: 'prodotti.modifica',    group: 'Anagrafiche',    label: 'Modificare e riordinare i prodotti', write: true },
   { key: 'prodotti.elimina',     group: 'Anagrafiche',    label: 'Eliminare prodotti', write: true },
   { key: 'prodotti.massiva',     group: 'Anagrafiche',    label: 'Modificare i prodotti in massa', write: true },
+  { key: 'prodotti.importa',     group: 'Anagrafiche',    label: 'Importare prodotti da fatture XML', write: true },
   { key: 'categorie.crea',       group: 'Anagrafiche',    label: 'Creare categorie e sottocategorie', write: true },
   { key: 'categorie.modifica',   group: 'Anagrafiche',    label: 'Modificare e riordinare le categorie', write: true },
   { key: 'categorie.elimina',    group: 'Anagrafiche',    label: 'Eliminare categorie', write: true },

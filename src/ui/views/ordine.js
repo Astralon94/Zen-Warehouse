@@ -2,7 +2,7 @@
 import { esc } from '../../domain/util.js';
 import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet } from '../dom.js';
 import {
-  activeLocale, activeLocaleObj, productsOf, supplierName, orderQty,
+  activeLocale, activeLocaleObj, productsOf, suppliersOf, supplierName, orderQty,
   topTypes, subTypes, type, deliveryPointsOf, orderLines,
 } from '../../domain/warehouse.js';
 import { addQty, setQty, clearOrder, orderTotals, sendOrder, supplierNoteOf, setSupplierNote, clearSupplierNote } from '../../domain/orders.js';
@@ -11,6 +11,38 @@ import { can } from '../../state/auth.js';
 import { go } from '../app.js';
 
 const fmtBadge = f => f ? `<span class="badge soft" style="font-size:10px">${esc(f)}</span>` : '';
+
+// Stato dei filtri della schermata Ordine: SOLO in memoria di vista (non persistito).
+const FILT = { q: '', supplierId: '', categoryId: '' };
+const filtersActive = () => !!(FILT.q.trim() || FILT.supplierId || FILT.categoryId);
+
+// applica i filtri (combinati in AND) a una lista di prodotti
+function applyFilters(lid, prods) {
+  const term = FILT.q.trim().toLowerCase();
+  let list = prods;
+  if (term) list = list.filter(p => (p.name || '').toLowerCase().includes(term));
+  if (FILT.supplierId) list = list.filter(p => (p.supplierId || '') === FILT.supplierId);
+  if (FILT.categoryId) list = list.filter(p => {
+    if (p.typeId === FILT.categoryId) return true;      // prodotto direttamente sulla categoria
+    const t = type(lid, p.typeId);
+    return !!t && t.parentId === FILT.categoryId;         // oppure su una sua sottocategoria
+  });
+  return list;
+}
+
+// barra filtri client-side: ricerca nome + fornitore + categoria + azzera
+function filtersBar(lid) {
+  const sups = suppliersOf(lid);
+  const cats = topTypes(lid);
+  return `<div class="card" style="margin-bottom:12px;padding:12px 14px">
+    <div class="field" style="margin:0 0 10px"><input id="ord_q" placeholder="Cerca prodotto…" value="${esc(FILT.q)}"></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
+      <div class="field" style="margin:0"><select id="ord_sup"><option value="">Tutti i fornitori</option>${sups.map(s => `<option value="${esc(s.id)}" ${FILT.supplierId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>
+      <div class="field" style="margin:0"><select id="ord_cat"><option value="">Tutte le categorie</option>${cats.map(c => `<option value="${esc(c.id)}" ${FILT.categoryId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
+    </div>
+    ${filtersActive() ? `<div style="margin-top:10px"><button class="btn sm" data-fclear>↺ Azzera filtri</button></div>` : ''}
+  </div>`;
+}
 
 export function render() {
   const l = activeLocaleObj();
@@ -24,9 +56,12 @@ export function render() {
       <div class="btnrow" style="margin-top:12px;justify-content:center"><button class="btn primary" data-godb>Vai al Database</button></div></div>`;
   }
 
+  h += filtersBar(lid);
+  const filtered = applyFilters(lid, prods);
+
   // raggruppa nell'ordine di visualizzazione: categoria → diretti → sottocategorie → Altro
   const byType = {};
-  prods.forEach(p => { const k = type(lid, p.typeId) ? p.typeId : '__none__'; (byType[k] = byType[k] || []).push(p); });
+  filtered.forEach(p => { const k = type(lid, p.typeId) ? p.typeId : '__none__'; (byType[k] = byType[k] || []).push(p); });
   const rowsBlock = items => `<div class="list two">${items.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(p => orderRow(lid, p)).join('')}</div>`;
 
   let body = '';
@@ -41,6 +76,7 @@ export function render() {
   const none = byType['__none__'] || [];
   if (none.length) { body += `<div class="section-title">Altro</div>` + rowsBlock(none); }
 
+  if (!body) body = `<div class="card empty">Nessun prodotto per i filtri selezionati.</div>`;
   h += `<div style="padding-bottom:88px">${body}</div>`;
 
   // barra fissa in basso: note per fornitore (comporre → ordini.componi) + invio (ordini.invia).
@@ -106,6 +142,13 @@ export function bind(root) {
   const rerender = () => { root.innerHTML = render(); bind(root); };
 
   root.querySelector('[data-godb]')?.addEventListener('click', () => go('db'));
+
+  // Filtri (attivi anche in sola lettura): ricerca con focus preservato + select fornitore/categoria.
+  const qi = root.querySelector('#ord_q');
+  if (qi) qi.oninput = () => { FILT.q = qi.value; const pos = qi.selectionStart; rerender(); const n = root.querySelector('#ord_q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+  root.querySelector('#ord_sup')?.addEventListener('change', e => { FILT.supplierId = e.target.value; rerender(); });
+  root.querySelector('#ord_cat')?.addEventListener('change', e => { FILT.categoryId = e.target.value; rerender(); });
+  root.querySelector('[data-fclear]')?.addEventListener('click', () => { FILT.q = ''; FILT.supplierId = ''; FILT.categoryId = ''; rerender(); });
 
   if (!canCompose() && !canSend()) return;   // sola lettura: nessun handler di composizione/invio
 

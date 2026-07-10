@@ -32,8 +32,9 @@ export const DEFAULT_DATA = () => {
     locali: [loc],
     // fornitore: {id,localeId,name,contact,phone,email,address,note,order}
     suppliers: [],
-    // prodotto: {id,localeId,name,typeId,supplierId,deliveryPointId,format,unit,notes,order,stockByWh:{whId:qty},minStock}
+    // prodotto: {id,localeId,name,typeId,supplierId,deliveryPointId,format,unit,notes,order,stockByWh:{whId:qty},minStock,price}
     // stockByWh = giacenza per magazzino; minStock = soglia globale sul TOTALE tra i magazzini.
+    // price = prezzo di acquisto (€ per unità di formato) — base della spesa nei report.
     products: [],
     // ordine inviato (STORICO): {id,localeId,createdAt,sentAt,status,note, lines:[{productId,name,qty,format,supplierId}], receivedSuppliers:{...}, dismissedSuppliers:{...}}
     // receivedSuppliers = ricezione PER FORNITORE (la merce arriva da ciascun fornitore separatamente);
@@ -109,6 +110,7 @@ export function migrate(d) {
     if (p.notes == null) p.notes = '';
     if (p.order == null) p.order = i;
     if (p.minStock == null) p.minStock = 0;
+    if (p.price == null) p.price = 0;
     // scorte per magazzino: se manca, deriva dal vecchio product.stock nel primo magazzino del locale
     if (!p.stockByWh || typeof p.stockByWh !== 'object' || Array.isArray(p.stockByWh)) {
       const wh = firstWhOf[p.localeId];

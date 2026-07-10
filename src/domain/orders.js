@@ -68,6 +68,9 @@ export function sendOrder(localeId, { deliveryPointId = null, note = '' } = {}) 
     productId: p.id, name: p.name, qty, format: p.format || '',
     supplierId: p.supplierId || null, supplierName: p.supplierId ? supplierName(p.supplierId) : null,
     notes: p.notes || '',
+    // snapshot del prezzo di acquisto all'invio: i report storici sulla spesa non cambiano
+    // se il prezzo del prodotto viene modificato in seguito.
+    price: +p.price || 0,
   }));
   if (!lines.length) return null;
   const now = Date.now();

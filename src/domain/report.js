@@ -1,8 +1,11 @@
 // ============ Report/analisi sugli ordini (Zen-Warehouse) ============
-// Derivazioni pure sullo storico `data.orders`: top prodotti, volumi per fornitore, ripartizione
-// per categoria, andamento mensile. Niente stato salvato: tutto ricalcolato dai fatti.
+// Derivazioni pure sullo storico `data.orders`. Metrica PRINCIPALE = la SPESA (€): per riga
+// = qty × prezzo di acquisto. Il prezzo è lo snapshot salvato sulla riga all'invio (ln.price);
+// per le righe storiche senza prezzo si ricade sul prezzo attuale del prodotto, altrimenti 0
+// (e si segnala `partialPrices`). I pezzi restano come metrica secondaria. Niente stato salvato.
 // I filtri (periodo/intervallo/fornitore/categoria) sono combinabili e ricalcolano KPI e aggregati.
 import { ordersOf, product, type, subTypes, topTypes } from './warehouse.js';
+import { round2 } from './util.js';
 
 // period: 'all' | '30' | '90' | 'year'
 export function ordersInPeriod(localeId, period) {
@@ -67,7 +70,18 @@ export function reportData(localeId, opts = {}) {
     return true;
   };
 
-  const totals = { orders: 0, pieces: 0, righe: 0, suppliers: 0 };
+  // prezzo di una riga: snapshot salvato all'invio (ln.price); fallback sul prezzo attuale del
+  // prodotto (approssimato) e, se assente, 0. `partialPrices` segnala che alcune righe non
+  // avevano lo snapshot → i totali di spesa sono parziali/approssimati.
+  let partialPrices = false;
+  const priceOf = (ln) => {
+    if (ln.price != null && ln.price !== '') return +ln.price || 0;
+    partialPrices = true;
+    const p = product(ln.productId);
+    return p ? (+p.price || 0) : 0;
+  };
+
+  const totals = { orders: 0, pieces: 0, righe: 0, suppliers: 0, spend: 0 };
   const prodMap = {}, supMap = {}, monthMap = {}, catMap = {};
 
   orders.forEach(o => {
@@ -75,37 +89,41 @@ export function reportData(localeId, opts = {}) {
     if (!lines.length) return; // l'ordine non conta se nessuna riga passa i filtri
     totals.orders++;
     const mk = new Date(o.sentAt || o.createdAt).toISOString().slice(0, 7);
-    const m = monthMap[mk] || (monthMap[mk] = { orders: 0, pieces: 0 });
+    const m = monthMap[mk] || (monthMap[mk] = { orders: 0, pieces: 0, spend: 0 });
     m.orders++;
     lines.forEach(ln => {
       const qty = ln.qty || 0;
-      totals.pieces += qty; totals.righe++; m.pieces += qty;
+      const spend = round2(qty * priceOf(ln));
+      totals.pieces += qty; totals.righe++; totals.spend = round2(totals.spend + spend);
+      m.pieces += qty; m.spend = round2(m.spend + spend);
       const pk = ln.productId || ln.name;
-      const p = prodMap[pk] || (prodMap[pk] = { name: ln.name, qty: 0, orders: new Set() });
-      p.qty += qty; p.orders.add(o.id);
+      const p = prodMap[pk] || (prodMap[pk] = { name: ln.name, qty: 0, spend: 0, orders: new Set() });
+      p.qty += qty; p.spend = round2(p.spend + spend); p.orders.add(o.id);
       const sk = ln.supplierId || '__none__';
-      const s = supMap[sk] || (supMap[sk] = { name: ln.supplierName || 'Senza fornitore', pieces: 0, righe: 0, orders: new Set() });
-      s.pieces += qty; s.righe++; s.orders.add(o.id);
+      const s = supMap[sk] || (supMap[sk] = { name: ln.supplierName || 'Senza fornitore', pieces: 0, spend: 0, righe: 0, orders: new Set() });
+      s.pieces += qty; s.spend = round2(s.spend + spend); s.righe++; s.orders.add(o.id);
       // ripartizione per categoria principale (dal catalogo attuale)
       const cat = topCategoryOf(localeId, product(ln.productId)?.typeId);
       const ck = cat?.id || '__none__';
-      const c = catMap[ck] || (catMap[ck] = { name: cat?.name || 'Senza categoria', pieces: 0, righe: 0 });
-      c.pieces += qty; c.righe++;
+      const c = catMap[ck] || (catMap[ck] = { name: cat?.name || 'Senza categoria', pieces: 0, spend: 0, righe: 0 });
+      c.pieces += qty; c.spend = round2(c.spend + spend); c.righe++;
     });
   });
 
-  const topProducts = Object.values(prodMap).map(p => ({ name: p.name, qty: p.qty, ordini: p.orders.size })).sort((a, b) => b.qty - a.qty);
-  const bySupplier = Object.values(supMap).map(s => ({ name: s.name, pieces: s.pieces, righe: s.righe, ordini: s.orders.size })).sort((a, b) => b.pieces - a.pieces);
-  const byCategory = Object.values(catMap).map(c => ({ name: c.name, pieces: c.pieces, righe: c.righe })).sort((a, b) => b.pieces - a.pieces);
+  // aggregati ordinati per SPESA (metrica principale); i pezzi restano come dato secondario
+  const topProducts = Object.values(prodMap).map(p => ({ name: p.name, qty: p.qty, spend: p.spend, ordini: p.orders.size })).sort((a, b) => b.spend - a.spend || b.qty - a.qty);
+  const bySupplier = Object.values(supMap).map(s => ({ name: s.name, pieces: s.pieces, spend: s.spend, righe: s.righe, ordini: s.orders.size })).sort((a, b) => b.spend - a.spend || b.pieces - a.pieces);
+  const byCategory = Object.values(catMap).map(c => ({ name: c.name, pieces: c.pieces, spend: c.spend, righe: c.righe })).sort((a, b) => b.spend - a.spend || b.pieces - a.pieces);
   const byMonth = Object.entries(monthMap).map(([month, v]) => ({ month, ...v })).sort((a, b) => a.month.localeCompare(b.month));
   totals.suppliers = bySupplier.length;
 
   // KPI derivati aggiuntivi
   const avgPerOrder = totals.orders ? Math.round(totals.pieces / totals.orders) : 0;
+  const avgSpendPerOrder = totals.orders ? round2(totals.spend / totals.orders) : 0;
   const topSupplier = bySupplier[0]?.name || '—';
   const topProduct = topProducts[0]?.name || '—';
 
-  return { totals, topProducts, bySupplier, byCategory, byMonth, avgPerOrder, topSupplier, topProduct };
+  return { totals, topProducts, bySupplier, byCategory, byMonth, avgPerOrder, avgSpendPerOrder, topSupplier, topProduct, partialPrices };
 }
 
 // lista categorie principali del locale, per popolare il filtro (id/name)

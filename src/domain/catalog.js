@@ -21,7 +21,7 @@ function reorder(list, id, dir) {
 // ---- Prodotti ----
 export function addProduct(localeId, rec) {
   const order = data.products.filter(p => p.localeId === localeId).length;
-  const p = { id: uid(), localeId, name: '', format: '', typeId: null, supplierId: null, notes: '', order, stockByWh: {}, minStock: 0, ...rec };
+  const p = { id: uid(), localeId, name: '', format: '', typeId: null, supplierId: null, notes: '', order, stockByWh: {}, minStock: 0, price: 0, ...rec };
   data.products.push(p); save(); return p;
 }
 export function updateProduct(id, patch) {

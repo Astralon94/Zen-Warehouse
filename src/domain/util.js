@@ -54,6 +54,21 @@ export const normLevel = v => { const n = parseInt(v, 10); return Number.isFinit
 // id univoco (timestamp + random)
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+// ---- denaro (prezzi di acquisto dei prodotti, spesa nei report) ----
+export const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
+const _eur = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' });
+export const fmtEur = n => _eur.format(round2(n));
+// Parsing tollerante di un importo digitato/importato: accetta virgola o punto come
+// separatore decimale. Se è presente la virgola, i punti sono migliaia ("1.234,56"→1234.56);
+// altrimenti il punto è decimale ("1.50"→1.5). Mai negativo.
+export function parseMoney(v) {
+  let s = String(v ?? '').trim().replace(/[^\d.,-]/g, '');
+  if (!s) return 0;
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : Math.max(0, round2(n));
+}
+
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const fullName = e => `${(e.firstName || '').trim()} ${(e.lastName || '').trim()}`.trim() || 'Senza nome';

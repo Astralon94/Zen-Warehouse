@@ -1,8 +1,16 @@
 // ============ Vista Dashboard (Zen-Warehouse) ============
 import { data } from '../../state/store.js';
-import { esc } from '../../domain/util.js';
-import { activeLocale, activeLocaleObj, counts, lowStock, ordersOf } from '../../domain/warehouse.js';
+import { esc, fmtEur, round2 } from '../../domain/util.js';
+import { activeLocale, activeLocaleObj, counts, lowStock, ordersOf, product } from '../../domain/warehouse.js';
 import { go } from '../app.js';
+
+// spesa di un ordine dallo storico: snapshot di riga (ln.price) → prezzo attuale prodotto → 0
+function orderSpend(o) {
+  return round2((o.lines || []).reduce((s, ln) => {
+    const price = (ln.price != null && ln.price !== '') ? (+ln.price || 0) : (+product(ln.productId)?.price || 0);
+    return s + (ln.qty || 0) * price;
+  }, 0));
+}
 
 export function render() {
   const lid = activeLocale();
@@ -47,8 +55,9 @@ export function render() {
     h += `<div class="list two">${recent.map(o => {
       const n = (o.lines || []).length;
       const d = o.sentAt ? new Date(o.sentAt).toLocaleDateString('it-IT') : '';
+      const sp = orderSpend(o);
       return `<div class="row click" data-go="stor"><div class="emoji">🧾</div>
-        <div class="mid"><div class="t1">${esc(o.note || 'Ordine')}</div><div class="t2">${d} · ${n} rig${n === 1 ? 'a' : 'he'}</div></div></div>`;
+        <div class="mid"><div class="t1">${esc(o.note || 'Ordine')}</div><div class="t2">${d} · ${n} rig${n === 1 ? 'a' : 'he'}${sp > 0 ? ' · ' + fmtEur(sp) : ''}</div></div></div>`;
     }).join('')}</div>`;
   }
 
