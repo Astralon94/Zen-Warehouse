@@ -181,7 +181,7 @@ function summarySheet(res) {
     <div class="list">
       <div class="row"><div class="emoji">✅</div><div class="mid"><div class="t1">Aggiunti</div></div><div class="amt tnum" style="font-weight:800">${res.added}</div></div>
       <div class="row"><div class="emoji">⏭️</div><div class="mid"><div class="t1">Saltati</div></div><div class="amt tnum" style="font-weight:800">${res.skipped}</div></div>
-      <div class="row"><div class="emoji">⚠️</div><div class="mid"><div class="t1">Già presenti (rilevati)</div></div><div class="amt tnum" style="font-weight:800">${res.alreadyPresent}</div></div>
+      <div class="row"><div class="emoji">⚠️</div><div class="mid"><div class="t1">Già presenti (saltati in automatico)</div></div><div class="amt tnum" style="font-weight:800">${res.alreadyPresent}</div></div>
     </div>
     <div class="actions"><button class="btn primary" data-ok>Chiudi</button></div>`,
     sheet => { sheet.querySelector('[data-ok]').onclick = closeSheet; });
@@ -206,7 +206,9 @@ export async function importProductsFromInvoice(lid, files, onDone) {
     if (!pick) { cancelled = true; break; } // annullato: interrompe l'intera coda
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (findExisting(lid, line.desc, pick.supplierId)) res.alreadyPresent++;
+      // Prodotto già presente (stesso nome, stesso locale/fornitore): SALTO AUTOMATICO,
+      // senza mostrare la scheda — si contano a parte nel riepilogo.
+      if (findExisting(lid, line.desc, pick.supplierId)) { res.alreadyPresent++; continue; }
       const choice = await productStep(lid, line, { ...pick, index: i, total: lines.length });
       if (choice === 'add') res.added++;
       else if (choice === 'skip') res.skipped++;
