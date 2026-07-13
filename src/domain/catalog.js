@@ -3,8 +3,29 @@
 // Ogni mutazione lavora su `data` e chiama save(). Le categorie e i punti di consegna
 // sono ANNIDATI nel doc del locale; prodotti e fornitori sono collezioni top-level (localeId).
 import { data, save } from '../state/store.js';
-import { uid } from './util.js';
+import { uid, round2 } from './util.js';
 import { loc, typesOf, subTypes } from './warehouse.js';
+
+// ---- Storico prezzi (Feature 6) ----
+// Registra una voce nello storico del prodotto QUANDO il prezzo cambia davvero (tolleranza 0,005 €).
+// Voce = {ts, price, source:'manuale'|'xml'|'massiva'}; cap a 50 voci (si tengono le più recenti).
+// Ritorna true se una voce è stata aggiunta. Non tocca p.price: lo imposta il chiamante.
+export function recordPriceIfChanged(p, newPrice, source) {
+  if (!p) return false;
+  const price = round2(newPrice);
+  if (Math.abs(price - round2(p.price || 0)) < 0.005) return false; // nessuna variazione significativa
+  if (!Array.isArray(p.priceHistory)) p.priceHistory = [];
+  p.priceHistory.push({ ts: Date.now(), price, source: source || 'manuale' });
+  if (p.priceHistory.length > 50) p.priceHistory = p.priceHistory.slice(-50);
+  return true;
+}
+// Aggiorna il prezzo di un prodotto registrando la variazione nello storico (usata dall'import XML).
+export function applyPriceUpdate(id, newPrice, source) {
+  const p = data.products.find(x => x.id === id); if (!p) return false;
+  const changed = recordPriceIfChanged(p, newPrice, source);
+  p.price = round2(newPrice); save();
+  return changed;
+}
 
 const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0);
 function reorder(list, id, dir) {
@@ -19,13 +40,19 @@ function reorder(list, id, dir) {
 }
 
 // ---- Prodotti ----
-export function addProduct(localeId, rec) {
+export function addProduct(localeId, rec, priceSource = 'manuale') {
   const order = data.products.filter(p => p.localeId === localeId).length;
-  const p = { id: uid(), localeId, name: '', format: '', typeId: null, supplierId: null, notes: '', order, stockByWh: {}, minStock: 0, price: 0, ...rec };
+  const p = { id: uid(), localeId, name: '', format: '', typeId: null, supplierId: null, notes: '', order, stockByWh: {}, minStock: 0, targetStock: 0, price: 0, priceHistory: [], ...rec };
+  p.price = round2(+p.price || 0);
+  // storico prezzi: se il prodotto nasce con un prezzo, seminiamo la prima voce (salvo storico già passato)
+  if (!Array.isArray(p.priceHistory)) p.priceHistory = [];
+  if (p.price > 0 && !p.priceHistory.length) p.priceHistory.push({ ts: Date.now(), price: p.price, source: priceSource });
   data.products.push(p); save(); return p;
 }
 export function updateProduct(id, patch) {
   const p = data.products.find(x => x.id === id); if (!p) return;
+  // storico prezzi: se il patch cambia il prezzo, registra la variazione (modifica manuale dall'editor)
+  if ('price' in patch) recordPriceIfChanged(p, patch.price, 'manuale');
   Object.assign(p, patch); save();
 }
 export function deleteProduct(id) {

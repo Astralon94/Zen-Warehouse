@@ -32,9 +32,11 @@ export const DEFAULT_DATA = () => {
     locali: [loc],
     // fornitore: {id,localeId,name,contact,phone,email,address,note,order}
     suppliers: [],
-    // prodotto: {id,localeId,name,typeId,supplierId,deliveryPointId,format,unit,notes,order,stockByWh:{whId:qty},minStock,price}
+    // prodotto: {id,localeId,name,typeId,supplierId,deliveryPointId,format,unit,notes,order,stockByWh:{whId:qty},minStock,targetStock,price,priceHistory}
     // stockByWh = giacenza per magazzino; minStock = soglia globale sul TOTALE tra i magazzini.
+    // targetStock = scorta "obiettivo" (facoltativa) usata dalla proposta d'ordine automatica.
     // price = prezzo di acquisto (€ per unità di formato) — base della spesa nei report.
+    // priceHistory = [{ts,price,source:'manuale'|'xml'|'massiva'}] — storico prezzi (cap 50 voci).
     products: [],
     // ordine inviato (STORICO): {id,localeId,createdAt,sentAt,status,note, lines:[{productId,name,qty,format,supplierId}], receivedSuppliers:{...}, dismissedSuppliers:{...}}
     // receivedSuppliers = ricezione PER FORNITORE (la merce arriva da ciascun fornitore separatamente);
@@ -110,7 +112,9 @@ export function migrate(d) {
     if (p.notes == null) p.notes = '';
     if (p.order == null) p.order = i;
     if (p.minStock == null) p.minStock = 0;
+    if (p.targetStock == null) p.targetStock = 0;
     if (p.price == null) p.price = 0;
+    if (!Array.isArray(p.priceHistory)) p.priceHistory = [];
     // scorte per magazzino: se manca, deriva dal vecchio product.stock nel primo magazzino del locale
     if (!p.stockByWh || typeof p.stockByWh !== 'object' || Array.isArray(p.stockByWh)) {
       const wh = firstWhOf[p.localeId];

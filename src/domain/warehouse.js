@@ -25,6 +25,12 @@ export const warehouseName = (localeId, whId) => warehouse(localeId, whId)?.name
 // giacenza di un prodotto in un magazzino / totale su tutti i magazzini
 export const stockOf = (product, whId) => (product?.stockByWh?.[whId] || 0);
 export const totalStock = product => Object.values(product?.stockByWh || {}).reduce((a, v) => a + (+v || 0), 0);
+// valore della giacenza di un prodotto (scorta × prezzo): con whId sul singolo magazzino, senza sul totale.
+export const stockValueOf = (product, whId = null) => (whId != null ? stockOf(product, whId) : totalStock(product)) * (+product?.price || 0);
+// valore complessivo delle giacenze del locale (o di un magazzino specifico): Σ scorta×prezzo dei prodotti.
+export function warehouseValue(localeId, whId = null) {
+  return productsOf(localeId).reduce((s, p) => s + stockValueOf(p, whId), 0);
+}
 
 // ---- categorie ammesse per magazzino ----
 // categoria di primo livello a cui appartiene un type (risale il parentId); null se type assente/non valido

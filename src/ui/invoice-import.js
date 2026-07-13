@@ -4,12 +4,12 @@
 // (DettaglioLinee) uno per uno, con i campi precompilati (nome, prezzo, unità) → l'utente
 // completa e Conferma o Salta → riepilogo finale. Le quantità della fattura NON toccano le
 // giacenze: l'import crea SOLO anagrafiche prodotto (con il prezzo di acquisto).
-import { esc, fmtEur, parseMoney } from '../domain/util.js';
+import { esc, fmtEur, parseMoney, round2 } from '../domain/util.js';
 import { FORMATS } from '../state/model.js';
 import { openSheet, closeSheet, toast } from './dom.js';
 import { can } from '../state/auth.js';
 import { productsOf, suppliersOf, topTypes, subTypes } from '../domain/warehouse.js';
-import { addProduct, addSupplier } from '../domain/catalog.js';
+import { addProduct, addSupplier, applyPriceUpdate } from '../domain/catalog.js';
 import { parseFatturaPA } from '../importers/fatturapa.js';
 import { extractXmlFromP7m } from '../importers/p7m.js';
 
@@ -167,10 +167,41 @@ function productStep(lid, line, ctx) {
           supplierId: ctx.supplierId || null,
           notes: g('#i_notes').value.trim(),
           price: parseMoney(g('#i_price').value),
-        });
+        }, 'xml'); // storico prezzo: prima voce con origine "da fattura XML"
         resolve('add');
       };
     });
+}
+
+// ---- passo "Aggiorna prezzi" (Feature 4) ----
+// Mostrato solo se ci sono prodotti già presenti con prezzo diverso in fattura (e l'utente ha
+// `prodotti.modifica`). Checkbox preselezionate; ritorna il numero di prezzi effettivamente aggiornati.
+function priceUpdateStep(lid, updates) {
+  return new Promise(resolve => {
+    const rows = updates.map((u, i) => `
+      <label class="row" style="cursor:pointer;align-items:center">
+        <input type="checkbox" class="selchk pu" data-i="${i}" checked>
+        <div class="mid"><div class="t1">${esc(u.name)}</div>
+          <div class="t2"><span class="tnum">${fmtEur(u.oldPrice)}</span> → <span class="tnum" style="color:var(--accent);font-weight:700">${fmtEur(u.newPrice)}</span></div></div>
+      </label>`).join('');
+    openSheet(`
+      <h2>💶 Aggiorna prezzi</h2>
+      <div class="sheetsub">${updates.length} prodott${updates.length === 1 ? 'o' : 'i'} già present${updates.length === 1 ? 'e' : 'i'} con un prezzo diverso in fattura. Scegli quali aggiornare.</div>
+      <div class="list">${rows}</div>
+      <div class="actions"><button class="btn" data-skip>Salta</button><button class="btn primary" data-ok>Aggiorna selezionati</button></div>`,
+      sheet => {
+        sheet.querySelector('[data-skip]').onclick = () => resolve(0);
+        sheet.querySelector('[data-ok]').onclick = () => {
+          let n = 0;
+          sheet.querySelectorAll('.pu').forEach(chk => {
+            if (!chk.checked) return;
+            const u = updates[+chk.dataset.i];
+            if (applyPriceUpdate(u.id, u.newPrice, 'xml')) n++;
+          });
+          resolve(n);
+        };
+      });
+  });
 }
 
 // ---- riepilogo finale ----
@@ -182,6 +213,7 @@ function summarySheet(res) {
       <div class="row"><div class="emoji">✅</div><div class="mid"><div class="t1">Aggiunti</div></div><div class="amt tnum" style="font-weight:800">${res.added}</div></div>
       <div class="row"><div class="emoji">⏭️</div><div class="mid"><div class="t1">Saltati</div></div><div class="amt tnum" style="font-weight:800">${res.skipped}</div></div>
       <div class="row"><div class="emoji">⚠️</div><div class="mid"><div class="t1">Già presenti (saltati in automatico)</div></div><div class="amt tnum" style="font-weight:800">${res.alreadyPresent}</div></div>
+      <div class="row"><div class="emoji">💶</div><div class="mid"><div class="t1">Prezzi aggiornati</div></div><div class="amt tnum" style="font-weight:800">${res.pricesUpdated}</div></div>
     </div>
     <div class="actions"><button class="btn primary" data-ok>Chiudi</button></div>`,
     sheet => { sheet.querySelector('[data-ok]').onclick = closeSheet; });
@@ -195,8 +227,10 @@ export async function importProductsFromInvoice(lid, files, onDone) {
   if (!invoices.length) { toast(invalid ? 'Nessuna fattura XML valida' : 'Nessun file da importare'); return; }
   if (invalid) toast(`${invalid} file ignorat${invalid === 1 ? 'o' : 'i'} (non valid${invalid === 1 ? 'o' : 'i'})`);
 
-  const res = { added: 0, skipped: 0, alreadyPresent: 0 };
+  const res = { added: 0, skipped: 0, alreadyPresent: 0, pricesUpdated: 0 };
   let cancelled = false;
+  const canEditPrice = can('prodotti.modifica'); // il passo prezzi non è coperto da prodotti.importa
+  const priceUpdates = new Map();                 // productId -> {id,name,oldPrice,newPrice} (dedup, ultima fattura vince)
 
   for (const invoice of invoices) {
     if (cancelled) break;
@@ -208,12 +242,25 @@ export async function importProductsFromInvoice(lid, files, onDone) {
       const line = lines[i];
       // Prodotto già presente (stesso nome, stesso locale/fornitore): SALTO AUTOMATICO,
       // senza mostrare la scheda — si contano a parte nel riepilogo.
-      if (findExisting(lid, line.desc, pick.supplierId)) { res.alreadyPresent++; continue; }
+      const existing = findExisting(lid, line.desc, pick.supplierId);
+      if (existing) {
+        res.alreadyPresent++;
+        // Feature 4: se il prezzo in fattura differisce (> 0,005 €), raccogli la variazione per il passo finale.
+        if (canEditPrice && line.price > 0 && Math.abs(round2(line.price) - round2(existing.price || 0)) > 0.005) {
+          priceUpdates.set(existing.id, { id: existing.id, name: existing.name, oldPrice: round2(existing.price || 0), newPrice: round2(line.price) });
+        }
+        continue;
+      }
       const choice = await productStep(lid, line, { ...pick, index: i, total: lines.length });
       if (choice === 'add') res.added++;
       else if (choice === 'skip') res.skipped++;
       else { cancelled = true; break; } // annulla import
     }
+  }
+
+  // Passo "Aggiorna prezzi" prima del riepilogo (solo se ci sono variazioni e l'import non è stato annullato).
+  if (!cancelled && priceUpdates.size) {
+    res.pricesUpdated = await priceUpdateStep(lid, [...priceUpdates.values()]);
   }
 
   summarySheet(res);

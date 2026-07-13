@@ -5,7 +5,7 @@ import {
   activeLocale, activeLocaleObj, productsOf, suppliersOf, supplierName, orderQty,
   topTypes, subTypes, type, deliveryPointsOf, orderLines, totalStock,
 } from '../../domain/warehouse.js';
-import { addQty, setQty, clearOrder, orderTotals, sendOrder, supplierNoteOf, setSupplierNote, clearSupplierNote } from '../../domain/orders.js';
+import { addQty, setQty, clearOrder, orderTotals, sendOrder, proposeRestock, supplierNoteOf, setSupplierNote, clearSupplierNote } from '../../domain/orders.js';
 import { generateOrderPdfs } from '../../domain/orderpdf.js';
 import { can } from '../../state/auth.js';
 import { go } from '../app.js';
@@ -73,6 +73,8 @@ export function render() {
   }
 
   h += filtersBar(lid);
+  // Proposta d'ordine automatica (Feature 2): riempie l'ordine coi prodotti sotto scorta/esauriti.
+  if (canCompose()) h += `<div class="btnrow" style="margin-bottom:12px"><button class="btn" data-restock>⚡ Riordina sotto scorta</button></div>`;
   const filtered = applyFilters(lid, prods);
 
   // raggruppa nell'ordine di visualizzazione: categoria → diretti → sottocategorie → Altro
@@ -210,6 +212,11 @@ export function bind(root) {
   };
 
   if (canCompose()) {
+    root.querySelector('[data-restock]')?.addEventListener('click', () => {
+      const n = proposeRestock(lid);
+      toast(n ? `Aggiunti ${n} prodott${n === 1 ? 'o' : 'i'} alla proposta` : 'Nessun prodotto sotto scorta');
+      rerender();
+    });
     root.querySelectorAll('[data-minus]').forEach(b => b.onclick = () => { addQty(lid, b.dataset.minus, -1); updateRow(b.dataset.minus); });
     root.querySelectorAll('[data-plus]').forEach(b => b.onclick = () => { addQty(lid, b.dataset.plus, +1); updateRow(b.dataset.plus); });
     root.querySelectorAll('[data-qty]').forEach(inp => inp.onchange = () => { setQty(lid, inp.dataset.qty, inp.value); updateRow(inp.dataset.qty); });

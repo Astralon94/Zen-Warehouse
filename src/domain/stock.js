@@ -112,6 +112,35 @@ export function applyMovementBatch(localeId, { type, fromWh, toWh, note, label, 
   return { batchId, type, label, fromWh: isCarico ? null : fromWh, toWh: (isTransfer || isCarico) ? toWh : null, note, date, ts, lines: out };
 }
 
+// ---- Rettifica da inventario (Feature 3) ----
+// Applica le giacenze CONTATE di un magazzino, registrando ogni differenza come movimento (kind 'in'
+// se il conteggio è maggiore, 'out' se minore) sotto UN unico `batchId` con `batchType:'rettifica'`.
+// È coerente con la Rettifica singola (setStock: il delta diventa un movimento in/out), ma raggruppa
+// più prodotti in una sola scheda nominabile. `counts` = { productId: quantità contata }.
+// Ritorna la scheda { batchId, type:'rettifica', toWh:whId, lines:[{...,delta,before,after}] } o null.
+export function applyInventoryBatch(localeId, whId, counts, label) {
+  if (!whId) return null;
+  const batchId = uid();
+  const ts = Date.now();
+  const date = todayStr();
+  label = (label || '').trim();
+  const out = [];
+  Object.entries(counts || {}).forEach(([productId, val]) => {
+    const p = product(productId); if (!p) return;
+    const target = Math.max(0, Math.floor(+val) || 0);
+    const before = cur(p, whId);
+    const delta = target - before;
+    if (delta === 0) return;             // nessuna differenza per questo prodotto
+    setWh(p, whId, target);
+    const kind = delta > 0 ? 'in' : 'out';
+    addMove(localeId, p.id, whId, Math.abs(delta), kind, '', null, { batchId, batchType: 'rettifica', batchLabel: label, name: p.name, before, after: target });
+    out.push({ productId: p.id, name: p.name, format: p.format || '', qty: Math.abs(delta), delta, before, after: target });
+  });
+  if (!out.length) return null;
+  save();
+  return { batchId, type: 'rettifica', label, fromWh: null, toWh: whId, note: '', date, ts, lines: out };
+}
+
 // ricostruisce le schede del locale dai movimenti con `batchId`, dalla più recente
 export function schede(localeId) {
   const byBatch = new Map();
@@ -121,12 +150,14 @@ export function schede(localeId) {
     if (!s) {
       // tipo scheda: dal batchType salvato, con fallback dal kind del movimento
       const bt = m.batchType || (m.kind === 'transfer' ? 'transfer' : m.kind === 'in' ? 'carico' : 'prelievo');
+      // rettifica: il magazzino coinvolto è la destinazione logica (nessuna origine "da")
+      const single = bt === 'carico' || bt === 'rettifica';
       s = {
         batchId: m.batchId,
         type: bt,
         label: m.batchLabel || '',        // nome descrittivo (vuoto per le schede pre-esistenti)
-        fromWh: bt === 'transfer' ? m.fromWarehouseId : bt === 'carico' ? null : m.warehouseId,
-        toWh: (bt === 'transfer' || bt === 'carico') ? m.warehouseId : null,
+        fromWh: bt === 'transfer' ? m.fromWarehouseId : single ? null : m.warehouseId,
+        toWh: (bt === 'transfer' || single) ? m.warehouseId : null,
         note: m.note || '',
         ts: m.ts || 0,
         date: m.date || '',
@@ -134,7 +165,8 @@ export function schede(localeId) {
       };
       byBatch.set(m.batchId, s);
     }
-    s.lines.push({ name: m.name || (product(m.productId)?.name) || '—', qty: m.qty || 0 });
+    // kind sulla riga: consente alla rettifica di mostrare il segno (+/−) del delta
+    s.lines.push({ name: m.name || (product(m.productId)?.name) || '—', qty: m.qty || 0, kind: m.kind });
     if ((m.ts || 0) < s.ts) { s.ts = m.ts || 0; s.date = m.date || s.date; }
   });
   return [...byBatch.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0));

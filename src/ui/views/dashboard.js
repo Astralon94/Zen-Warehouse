@@ -1,7 +1,7 @@
 // ============ Vista Dashboard (Zen-Warehouse) ============
 import { data } from '../../state/store.js';
 import { esc, fmtEur, round2 } from '../../domain/util.js';
-import { activeLocale, activeLocaleObj, counts, lowStock, ordersOf, product } from '../../domain/warehouse.js';
+import { activeLocale, activeLocaleObj, counts, lowStock, ordersOf, product, warehouseValue } from '../../domain/warehouse.js';
 import { go } from '../app.js';
 
 // spesa di un ordine dallo storico: snapshot di riga (ln.price) → prezzo attuale prodotto → 0
@@ -30,6 +30,14 @@ export function render() {
     ${kpi('Fornitori', c.fornitori)}
     ${kpi('Categorie', c.categorie)}
     ${kpi('Ordini inviati', c.ordini)}
+  </div>`;
+
+  // Valore complessivo delle giacenze del locale (Feature 1) — metrica in evidenza.
+  const wv = warehouseValue(lid);
+  h += `<div class="card kpi" style="margin-bottom:14px;border-color:var(--accent)">
+    <div class="lbl">💶 Valore magazzino</div>
+    <div class="val tnum">${fmtEur(wv)}</div>
+    <div class="muted" style="font-size:11.5px">Somma di giacenza × prezzo di tutti i prodotti del locale.</div>
   </div>`;
 
   if (low.length) {

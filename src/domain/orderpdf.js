@@ -165,7 +165,8 @@ export function generateMovementSlip(locale, scheda, warehouses) {
   const isoDate = (scheda.date && /^\d{4}-\d{2}-\d{2}/.test(scheda.date)) ? scheda.date.slice(0, 10) : new Date(when).toISOString().slice(0, 10);
   const isTransfer = scheda.type === 'transfer';
   const isCarico = scheda.type === 'carico';
-  const title = isCarico ? 'SCHEDA DI CARICO' : isTransfer ? 'SCHEDA DI TRASFERIMENTO' : 'SCHEDA DI PRELIEVO';
+  const isRettifica = scheda.type === 'rettifica';
+  const title = isRettifica ? 'SCHEDA DI RETTIFICA' : isCarico ? 'SCHEDA DI CARICO' : isTransfer ? 'SCHEDA DI TRASFERIMENTO' : 'SCHEDA DI PRELIEVO';
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const ml = 18, mr = 192, pw = 210, pageH = 297;
@@ -192,8 +193,8 @@ export function generateMovementSlip(locale, scheda, warehouses) {
   doc.setDrawColor(229, 231, 235); doc.setLineWidth(0.4); doc.line(ml, y + 2, mr, y + 2); y += 11;
 
   // Box Da / A
-  const from = isCarico ? 'Esterno / fornitore' : whName(scheda.fromWh);
-  const dest = isCarico ? whName(scheda.toWh) : isTransfer ? whName(scheda.toWh) : 'Fuori magazzino';
+  const from = isRettifica ? whName(scheda.toWh) : isCarico ? 'Esterno / fornitore' : whName(scheda.fromWh);
+  const dest = isRettifica ? 'Rettifica giacenza' : isCarico ? whName(scheda.toWh) : isTransfer ? whName(scheda.toWh) : 'Fuori magazzino';
   y = addRouteBox(doc, ml, mr, y, from, dest);
 
   // Intestazione tabella
@@ -203,10 +204,12 @@ export function generateMovementSlip(locale, scheda, warehouses) {
   doc.setFont('helvetica', 'normal'); doc.setTextColor(15, 23, 42);
 
   const maxY = pageH - 40;
+  // per la rettifica mostriamo il segno del delta (+ aumento / − diminuzione)
+  const qtyStr = it => isRettifica ? ((it.delta != null ? (it.delta < 0) : (it.kind === 'out')) ? '−' + it.qty : '+' + it.qty) : String(it.qty);
   (scheda.lines || []).forEach(it => {
     doc.setFontSize(9.5); const lines = doc.splitTextToSize(it.name, 118);
     doc.text(lines, ml, y); doc.setFontSize(9); doc.text(it.format || '—', 145, y);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(String(it.qty), mr, y, { align: 'right' });
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(qtyStr(it), mr, y, { align: 'right' });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
     y += lines.length > 1 ? lines.length * 5 + 1 : 6.5;
     doc.setDrawColor(245, 245, 245); doc.line(ml, y - 1.5, mr, y - 1.5); doc.setDrawColor(229, 231, 235);
@@ -235,10 +238,73 @@ export function generateMovementSlip(locale, scheda, warehouses) {
   doc.text('Data', ml, signY); doc.line(ml + 12, signY, ml + 70, signY);
   doc.text('Firma', 118, signY); doc.line(130, signY, mr, signY);
 
-  const safeType = isCarico ? 'carico' : isTransfer ? 'trasferimento' : 'prelievo';
+  const safeType = isRettifica ? 'rettifica' : isCarico ? 'carico' : isTransfer ? 'trasferimento' : 'prelievo';
   const filename = `scheda-${safeType}-${isoDate}.pdf`;
-  const label = (isCarico ? 'Carico' : isTransfer ? 'Trasferimento' : 'Prelievo') + ` · ${from} → ${dest}`;
+  const label = (isRettifica ? 'Rettifica' : isCarico ? 'Carico' : isTransfer ? 'Trasferimento' : 'Prelievo') + ` · ${from} → ${dest}`;
   return { supplierName: label, filename, blob: doc.output('blob'), righe: (scheda.lines || []).length, pezzi };
+}
+
+// ============ Foglio inventario stampabile (Feature 3) ============
+// PDF con l'elenco dei prodotti di un magazzino: giacenza attuale + colonna vuota "Contati" da
+// compilare a mano durante la conta fisica. Stesso linguaggio visivo delle schede di movimento.
+// `products` = [{name, format, stock}] già filtrati/ordinati. Ritorna { supplierName, filename, blob, righe, pezzi }.
+export function generateInventorySheet(locale, warehouse, products) {
+  const when = Date.now();
+  const dateStr = new Date(when).toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' });
+  const isoDate = new Date(when).toISOString().slice(0, 10);
+  const whName = warehouse?.name || 'Magazzino';
+
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const ml = 18, mr = 192, pw = 210, pageH = 297;
+  const colFmt = 118, colCur = 150, colCount = mr; // colonne: prodotto · formato · giac. · contati
+
+  // Testata: barra accento prugna con nome locale e data.
+  doc.setFillColor(0x7a, 0x6a, 0x99); doc.rect(0, 0, pw, 14, 'F');
+  doc.setFillColor(0xb3, 0x9a, 0xc9); doc.rect(pw / 2, 0, pw / 2, 14, 'F');
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
+  doc.text((locale?.name || 'MAGAZZINO').toUpperCase().slice(0, 45), ml, 9.5);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  doc.text(dateStr, mr, 9.5, { align: 'right' });
+
+  // Titolo + magazzino
+  let y = 26;
+  doc.setTextColor(15, 23, 42); doc.setFontSize(19); doc.setFont('helvetica', 'bold');
+  doc.text('FOGLIO INVENTARIO', ml, y);
+  y += 7; doc.setFontSize(11); doc.setFont('helvetica', 'normal'); doc.setTextColor(0x5a, 0x4d, 0x74);
+  doc.text(doc.splitTextToSize(whName, mr - ml)[0] || whName, ml, y);
+  doc.setTextColor(15, 23, 42); y += 4;
+  doc.setDrawColor(229, 231, 235); doc.setLineWidth(0.4); doc.line(ml, y + 2, mr, y + 2); y += 11;
+
+  // Intestazione tabella
+  const header = () => {
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(107, 114, 128);
+    doc.text('PRODOTTO', ml, y); doc.text('FORMATO', colFmt, y);
+    doc.text('GIAC.', colCur, y, { align: 'right' }); doc.text('CONTATI', colCount, y, { align: 'right' });
+    y += 3; doc.line(ml, y, mr, y); y += 5;
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(15, 23, 42);
+  };
+  header();
+
+  const maxY = pageH - 24;
+  (products || []).forEach(it => {
+    doc.setFontSize(9.5); const lines = doc.splitTextToSize(it.name, colFmt - ml - 4);
+    doc.text(lines, ml, y); doc.setFontSize(9); doc.text(it.format || '—', colFmt, y);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(String(it.stock), colCur, y, { align: 'right' });
+    // casella vuota per la conta manuale
+    doc.setDrawColor(180, 180, 180); doc.setLineWidth(0.4); doc.roundedRect(colCount - 22, y - 4, 22, 6.5, 1, 1, 'S');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    y += lines.length > 1 ? lines.length * 5 + 1 : 7.5;
+    doc.setDrawColor(245, 245, 245); doc.line(ml, y - 2, mr, y - 2); doc.setDrawColor(229, 231, 235);
+    if (y > maxY) { doc.addPage(); y = 20; header(); }
+  });
+
+  y += 4; doc.setDrawColor(200, 200, 200); doc.line(ml, y, mr, y); y += 5;
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 23, 42);
+  doc.text(`Totale prodotti: ${(products || []).length}`, ml, y);
+
+  const safeName = whName.replace(/[^a-zA-Z0-9À-ÿ\s]/g, '').replace(/\s+/g, '-') || 'magazzino';
+  const filename = `inventario-${safeName}-${isoDate}.pdf`;
+  return { supplierName: 'Foglio inventario · ' + whName, filename, blob: doc.output('blob'), righe: (products || []).length, pezzi: (products || []).reduce((s, it) => s + (it.stock || 0), 0) };
 }
 
 // Box "DA → A" per la scheda di movimento (prugna).

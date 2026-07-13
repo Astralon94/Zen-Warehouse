@@ -4,7 +4,7 @@
 // azzera l'ordine in corso. In Orders l'ordine era effimero; qui resta consultabile.
 import { data, save } from '../state/store.js';
 import { uid } from './util.js';
-import { loc, product, supplierName, orderLines, currentOrderOf } from './warehouse.js';
+import { loc, product, supplierName, orderLines, currentOrderOf, productsOf, totalStock } from './warehouse.js';
 
 // ---- storico ----
 export function deleteOrder(id) {
@@ -51,6 +51,29 @@ export function addQty(localeId, productId, delta) {
 export function clearOrder(localeId) {
   const l = loc(localeId); if (!l) return;
   l.currentOrder = {}; save();
+}
+
+// Proposta d'ordine automatica (Feature 2): per ogni prodotto in stato "sotto scorta" o "esaurito"
+// imposta nell'ordine in corso una quantità proposta = max((targetStock || minStock) − scorta, 1).
+// Gli esauriti senza soglie ottengono 1. Non sovrascrive quantità già inserite a mano (qty>0 → salta).
+// Ritorna il numero di prodotti aggiunti alla proposta.
+export function proposeRestock(localeId) {
+  const l = loc(localeId); if (!l) return 0;
+  if (!l.currentOrder || typeof l.currentOrder !== 'object') l.currentOrder = {};
+  const co = l.currentOrder;
+  let n = 0;
+  productsOf(localeId).forEach(p => {
+    const s = totalStock(p), m = p.minStock || 0, t = p.targetStock || 0;
+    const isOut = s <= 0;
+    const isLow = m > 0 && s <= m;
+    if (!isOut && !isLow) return;        // solo prodotti low/out
+    if ((co[p.id] || 0) > 0) return;     // rispetta le quantità già impostate manualmente
+    const target = t || m;               // scorta target, altrimenti soglia minima
+    co[p.id] = target > 0 ? Math.max(target - s, 1) : 1; // esaurito senza soglie → 1
+    n++;
+  });
+  if (n) save();
+  return n;
 }
 
 // Conteggi rapidi per la barra in basso.

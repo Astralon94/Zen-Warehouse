@@ -13,6 +13,7 @@ import {
   addType, updateType, deleteType, moveType,
   addSupplier, updateSupplier, deleteSupplier, reorderSuppliers,
   addDeliveryPoint, updateDeliveryPoint, deleteDeliveryPoint, reorderDeliveryPoints,
+  recordPriceIfChanged,
 } from '../../domain/catalog.js';
 import { makeSortable } from '../sortable.js';
 import { can } from '../../state/auth.js';
@@ -196,13 +197,16 @@ function productModal(lid, id, prefill) {
     </div>
     <div id="p_subslot">${subcatField(lid, catId, subId)}</div>
     <div class="field"><label>Fornitore</label><select id="p_sup">${suppOpts}</select></div>
+    <div class="field"><label>Prezzo di acquisto (€)</label><input id="p_price" inputmode="decimal" value="${src.price ? String(src.price).replace('.', ',') : ''}" placeholder="0,00">
+      <div class="muted" style="font-size:12px;margin-top:4px">Per unità di formato. Base della spesa nei report.</div></div>
     <div class="frow">
-      <div class="field"><label>Prezzo di acquisto (€)</label><input id="p_price" inputmode="decimal" value="${src.price ? String(src.price).replace('.', ',') : ''}" placeholder="0,00">
-        <div class="muted" style="font-size:12px;margin-top:4px">Per unità di formato. Base della spesa nei report.</div></div>
       <div class="field"><label>Soglia minima</label><input id="p_min" inputmode="numeric" value="${p?.minStock ?? ''}" placeholder="0">
         <div class="muted" style="font-size:12px;margin-top:4px">Avviso sotto scorta sul totale tra i magazzini.</div></div>
+      <div class="field"><label>Scorta target (facoltativa)</label><input id="p_target" inputmode="numeric" value="${p?.targetStock ? p.targetStock : ''}" placeholder="0">
+        <div class="muted" style="font-size:12px;margin-top:4px">Usata dalla proposta d'ordine automatica.</div></div>
     </div>
     <div class="field"><label>Note</label><input id="p_notes" value="${esc(p?.notes || '')}" placeholder="Note opzionali…"></div>
+    ${p ? priceHistoryHtml(p) : ''}
     <div class="actions">
       <button class="btn" data-cancel>Annulla</button>
       ${isNew ? `<button class="btn" data-add>Aggiungi e continua</button><button class="btn primary" data-addclose>Aggiungi</button>`
@@ -221,6 +225,7 @@ function productModal(lid, id, prefill) {
           name, format: g('#p_fmt').value, typeId: subV || catV || null,
           supplierId: g('#p_sup').value || null, notes: g('#p_notes').value.trim(),
           minStock: parseInt(g('#p_min').value, 10) || 0,
+          targetStock: parseInt(g('#p_target').value, 10) || 0,
           price: parseMoney(g('#p_price').value),
         };
       };
@@ -251,6 +256,29 @@ function subcatField(lid, catId, subId) {
   if (!subs.length) return '';
   const opts = `<option value="">— Nessuna —</option>` + subs.map(s => `<option value="${s.id}" ${subId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
   return `<div class="field"><label>Sottocategoria</label><select id="p_subcat">${opts}</select></div>`;
+}
+
+// ---------- STORICO PREZZO (Feature 6) ----------
+// Lista in sola lettura dello storico prezzi del prodotto (dal più recente), con la variazione
+// percentuale rispetto alla voce precedente. Vuoto = niente sezione.
+const PRICE_SRC_LABEL = { manuale: 'modifica manuale', xml: 'da fattura XML', massiva: 'modifica massiva' };
+function priceHistoryHtml(p) {
+  const hist = Array.isArray(p?.priceHistory) ? p.priceHistory : [];
+  if (!hist.length) return '';
+  const asc = hist.slice().sort((a, b) => (a.ts || 0) - (b.ts || 0)); // cronologico per la variazione vs precedente
+  const rows = asc.map((e, i) => {
+    const prev = i > 0 ? asc[i - 1].price : null;
+    let delta = '';
+    if (prev != null && prev > 0) {
+      const pct = ((e.price - prev) / prev) * 100;
+      const col = pct > 0 ? 'var(--red,#c2685f)' : pct < 0 ? 'var(--green,#6b8f80)' : 'var(--muted)';
+      delta = `<span class="tnum" style="font-size:11px;color:${col};font-weight:700;flex-shrink:0">${pct > 0 ? '+' : ''}${pct.toFixed(1).replace('.', ',')}%</span>`;
+    }
+    const d = new Date(e.ts || 0).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' });
+    return `<div class="row"><div class="mid"><div class="t1 tnum">${fmtEur(e.price)}</div>
+      <div class="t2">${esc(d)} · ${esc(PRICE_SRC_LABEL[e.source] || e.source || '—')}</div></div>${delta}</div>`;
+  }).reverse();
+  return `<div class="section-title">Storico prezzo</div><div class="list">${rows.join('')}</div>`;
 }
 
 // ---------- MODIFICA MASSIVA ----------
@@ -290,6 +318,12 @@ function bulkEditModal(lid, ids) {
         <input id="b_min" inputmode="numeric" placeholder="0" disabled style="margin-top:6px">
       </div>
     </div>
+    <div class="frow">
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="b_targetchk" class="selchk"> Imposta scorta target</label>
+        <input id="b_target" inputmode="numeric" placeholder="0" disabled style="margin-top:6px">
+      </div>
+    </div>
     <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Applica</button></div>`,
     sheet => {
       const g = s => sheet.querySelector(s);
@@ -300,6 +334,8 @@ function bulkEditModal(lid, ids) {
       };
       const minChk = g('#b_minchk'), minInp = g('#b_min');
       minChk.onchange = () => { minInp.disabled = !minChk.checked; if (minChk.checked) minInp.focus(); };
+      const targetChk = g('#b_targetchk'), targetInp = g('#b_target');
+      targetChk.onchange = () => { targetInp.disabled = !targetChk.checked; if (targetChk.checked) targetInp.focus(); };
       const priceChk = g('#b_pricechk'), priceInp = g('#b_price');
       priceChk.onchange = () => { priceInp.disabled = !priceChk.checked; if (priceChk.checked) priceInp.focus(); };
       g('[data-cancel]').onclick = closeSheet;
@@ -315,6 +351,7 @@ function bulkEditModal(lid, ids) {
         const supV = g('#b_sup').value;
         if (supV !== BULK_KEEP) patch.supplierId = supV === BULK_CLEAR ? null : supV;
         if (minChk.checked) patch.minStock = parseInt(minInp.value, 10) || 0;
+        if (targetChk.checked) patch.targetStock = parseInt(targetInp.value, 10) || 0;
         if (priceChk.checked) patch.price = parseMoney(priceInp.value);
 
         if (!Object.keys(patch).length) { toast('Nessuna modifica selezionata'); return; }
@@ -325,12 +362,20 @@ function bulkEditModal(lid, ids) {
         if ('typeId' in patch) parts.push('categoria → ' + (patch.typeId ? typeName(lid, patch.typeId) : 'nessuna'));
         if ('supplierId' in patch) parts.push('fornitore → ' + (patch.supplierId ? supplierName(patch.supplierId) : 'nessuno'));
         if ('minStock' in patch) parts.push('soglia minima → ' + patch.minStock);
+        if ('targetStock' in patch) parts.push('scorta target → ' + patch.targetStock);
         if ('price' in patch) parts.push('prezzo → ' + fmtEur(patch.price));
 
         closeSheet();
         confirmDialog(`Applicare a ${ids.length} prodott${ids.length === 1 ? 'o' : 'i'}?`, parts.join(' · '), 'Applica', () => {
           let n = 0;
-          ids.forEach(id => { const p = data.products.find(x => x.id === id); if (p) { Object.assign(p, patch); n++; } });
+          ids.forEach(id => {
+            const p = data.products.find(x => x.id === id);
+            if (p) {
+              // storico prezzi: registra la variazione (modifica massiva) prima di sovrascrivere
+              if ('price' in patch) recordPriceIfChanged(p, patch.price, 'massiva');
+              Object.assign(p, patch); n++;
+            }
+          });
           selected.clear();              // svuota PRIMA di save(): il re-render (via subscribe) mostra la selezione azzerata
           save();                        // un solo changeset granulare (save è debounced) + re-render
           toast(`${n} prodott${n === 1 ? 'o' : 'i'} aggiornat${n === 1 ? 'o' : 'i'} ✓`);

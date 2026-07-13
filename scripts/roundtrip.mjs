@@ -35,9 +35,9 @@ const sample = {
     { id: 'sup2', localeId: 'loc1', name: 'Ortofrutta Bio', contact: '', phone: '', email: '', address: '', note: 'bio certificato', order: 1 },
   ],
   products: [
-    { id: 'prod1', localeId: 'loc1', name: 'Barolo DOCG', typeId: 'ty-vin', supplierId: 'sup1', deliveryPointId: 'dp1', format: 'Bt', unit: '', notes: 'annata 2019', order: 0, stockByWh: { wh1: 8, wh2: 4 }, minStock: 6, price: 12.5 },
-    { id: 'prod2', localeId: 'loc1', name: 'Pomodori', typeId: 'ty-food', supplierId: 'sup2', deliveryPointId: null, format: 'Kg', unit: '', notes: '', order: 1, stockByWh: {}, minStock: 5, price: 2.4 },
-    { id: 'prod3', localeId: 'loc1', name: 'Sale', typeId: null, supplierId: null, deliveryPointId: null, format: 'Cf', unit: '', notes: '', order: 2, stockByWh: { wh1: 3 }, minStock: 0, price: 0 },
+    { id: 'prod1', localeId: 'loc1', name: 'Barolo DOCG', typeId: 'ty-vin', supplierId: 'sup1', deliveryPointId: 'dp1', format: 'Bt', unit: '', notes: 'annata 2019', order: 0, stockByWh: { wh1: 8, wh2: 4 }, minStock: 6, targetStock: 12, price: 12.5, priceHistory: [{ ts: 1710000000000, price: 11.9, source: 'manuale' }, { ts: 1720000000000, price: 12.5, source: 'xml' }] },
+    { id: 'prod2', localeId: 'loc1', name: 'Pomodori', typeId: 'ty-food', supplierId: 'sup2', deliveryPointId: null, format: 'Kg', unit: '', notes: '', order: 1, stockByWh: {}, minStock: 5, targetStock: 0, price: 2.4, priceHistory: [] },
+    { id: 'prod3', localeId: 'loc1', name: 'Sale', typeId: null, supplierId: null, deliveryPointId: null, format: 'Cf', unit: '', notes: '', order: 2, stockByWh: { wh1: 3 }, minStock: 0, targetStock: 0, price: 0, priceHistory: [] },
   ],
   orders: [{
     id: 'ord1', localeId: 'loc1', createdAt: 100, sentAt: 100, status: 'sent',
@@ -77,6 +77,9 @@ assert.equal(l.deliveryPoints[0].address, 'Via Roma 1', 'deliveryPoint annidato 
 assert.equal(l.supplierNotes.sup1, 'Consegnare entro le 10', 'supplierNotes annidate preservate');
 assert.equal(l.currentOrder.prod2, 3, 'currentOrder annidato preservato');
 assert.deepEqual(out1.products.find(p => p.id === 'prod1').stockByWh, { wh1: 8, wh2: 4 }, 'stockByWh per magazzino preservato');
+assert.equal(out1.products.find(p => p.id === 'prod1').targetStock, 12, 'targetStock (scorta target) preservato');
+assert.equal(out1.products.find(p => p.id === 'prod1').priceHistory.length, 2, 'priceHistory (storico prezzi) preservato');
+assert.equal(out1.products.find(p => p.id === 'prod1').priceHistory[1].source, 'xml', 'sorgente voce storico prezzi preservata');
 assert.equal(out1.orders[0].lines.length, 3, 'lines[] dell\'ordine preservate');
 assert.equal(out1.orders[0].lines[0].supplierName, 'Cantina Rossi', 'snapshot supplierName nella riga preservato');
 assert.equal(out1.orders[0].supplierNotes.sup1, 'Consegnare entro le 10', 'snapshot supplierNotes dell\'ordine preservato');
