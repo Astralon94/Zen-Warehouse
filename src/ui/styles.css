@@ -120,8 +120,11 @@ input[type="checkbox"]:disabled { opacity: .5; cursor: default; }
 .row .amt { font-weight: 700; white-space: nowrap; text-align: right; }
 /* liste a due colonne su schermi ampi: sfruttano la larghezza del desktop, colonna singola sotto il breakpoint */
 @media (min-width: 880px) {
-  .list.two { display: grid; grid-template-columns: 1fr 1fr; align-content: start; }
-  .list.two > .row { border-right: 1px solid var(--line); }
+  /* minmax(0,1fr): con `1fr` puro un nome prodotto lungo (nowrap) allarga la colonna oltre
+     il contenitore e la colonna DESTRA viene tagliata dall'overflow:hidden della lista.
+     min-width:0 sulle righe (grid item) permette al contenuto di restringersi (ellissi sul nome). */
+  .list.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-content: start; }
+  .list.two > .row { border-right: 1px solid var(--line); min-width: 0; }
   .list.two > .row:nth-child(2n) { border-right: none; }
 }
 
