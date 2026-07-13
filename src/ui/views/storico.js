@@ -9,6 +9,12 @@ import { can } from '../../state/auth.js';
 import { go } from '../app.js';
 
 let q = '';   // filtro testo (fornitore o prodotto)
+const PAGE = 30;                                // ordini mostrati per volta (rendering incrementale)
+let shown = PAGE;                               // quanti ordini sono visibili ora
+let period = 'all';                             // all | 7 | 30 | 90 (giorni)
+const PERIODS = [['all', 'Tutto'], ['7', 'Ultimi 7 giorni'], ['30', 'Ultimo mese'], ['90', 'Ultimi 3 mesi']];
+// timestamp minimo per il filtro periodo (0 = nessun limite)
+const periodCutoff = v => v === 'all' ? 0 : Date.now() - (+v) * 86400000;
 
 function fmtDateTime(ts) {
   const d = new Date(ts);
@@ -30,10 +36,6 @@ export function render() {
   const l = activeLocaleObj();
   if (!l) return `<div class="pagehead"><h1>Storico</h1></div><div class="card"><div class="empty">Crea un locale dalle Impostazioni.</div></div>`;
   const lid = activeLocale();
-  let list = ordersOf(lid).slice().sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
-
-  const term = q.trim().toLowerCase();
-  if (term) list = list.filter(o => (o.lines || []).some(ln => (ln.name || '').toLowerCase().includes(term) || (ln.supplierName || '').toLowerCase().includes(term)));
 
   let h = `<div class="pagehead"><h1>Storico</h1><span class="sub">${esc((l.emoji || '📦') + ' ' + l.name)}</span></div>`;
 
@@ -42,12 +44,24 @@ export function render() {
     return h + `<div class="card empty">Nessun ordine ancora inviato.<br><span class="muted">Gli ordini generati dalla schermata Ordine compaiono qui.</span></div>`;
   }
 
-  h += `<div class="field"><input id="stq" placeholder="Cerca prodotto o fornitore…" value="${esc(q)}"></div>`;
-  if (!list.length) return h + `<div class="card empty">Nessun ordine per "${esc(q)}".</div>`;
+  let list = ordersOf(lid).slice().sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
+  const cut = periodCutoff(period);
+  if (cut) list = list.filter(o => (o.sentAt || o.createdAt || 0) >= cut);
+  const term = q.trim().toLowerCase();
+  if (term) list = list.filter(o => (o.lines || []).some(ln => (ln.name || '').toLowerCase().includes(term) || (ln.supplierName || '').toLowerCase().includes(term)));
+
+  // ricerca + filtro periodo (stesso select semplice della visuale Schede)
+  const perOpts = PERIODS.map(([v, lbl]) => `<option value="${v}" ${period === v ? 'selected' : ''}>${esc(lbl)}</option>`).join('');
+  h += `<div class="frow" style="margin-bottom:10px">
+    <div class="field" style="margin:0;flex:1 1 60%"><input id="stq" placeholder="Cerca prodotto o fornitore…" value="${esc(q)}"></div>
+    <div class="field" style="margin:0"><select id="stperiod">${perOpts}</select></div>
+  </div>`;
+  if (!list.length) return h + `<div class="card empty">Nessun ordine con questi filtri.</div>`;
 
   h += `<div class="card" style="display:flex;justify-content:space-between;margin-bottom:12px"><span><b>${list.length}</b> ordin${list.length === 1 ? 'e' : 'i'}</span></div>`;
 
-  h += `<div class="list two">${list.map(o => {
+  const visible = list.slice(0, shown);
+  h += `<div class="list two">${visible.map(o => {
     const s = orderSummary(o);
     const dp = dpName(lid, o.deliveryPointId);
     return `<div class="row click" data-ord="${o.id}">
@@ -56,6 +70,9 @@ export function render() {
         <div class="t2">${s.righe} rig${s.righe === 1 ? 'a' : 'he'} · ${s.pezzi} pz · ${s.fornitori} fornitor${s.fornitori === 1 ? 'e' : 'i'}${dp ? ' · 📍 ' + esc(dp) : ''}</div></div>
     </div>`;
   }).join('')}</div>`;
+  if (list.length > visible.length) {
+    h += `<div class="btnrow" style="justify-content:center;margin-top:10px"><button class="btn" data-more>Mostra altri (restano ${list.length - visible.length})</button></div>`;
+  }
   return h;
 }
 
@@ -126,6 +143,8 @@ function openOrder(id) {
 export function bind(root) {
   const rerender = () => { root.innerHTML = render(); bind(root); };
   const qi = root.querySelector('#stq');
-  if (qi) qi.oninput = () => { q = qi.value; const pos = qi.selectionStart; rerender(); const n = root.querySelector('#stq'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+  if (qi) qi.oninput = () => { q = qi.value; shown = PAGE; const pos = qi.selectionStart; rerender(); const n = root.querySelector('#stq'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+  const pe = root.querySelector('#stperiod'); if (pe) pe.onchange = () => { period = pe.value; shown = PAGE; rerender(); };
+  root.querySelector('[data-more]')?.addEventListener('click', () => { shown += PAGE; rerender(); });
   root.querySelectorAll('[data-ord]').forEach(el => el.onclick = () => openOrder(el.dataset.ord));
 }

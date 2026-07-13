@@ -34,6 +34,19 @@ let q = '';
 let filter = 'all';    // all | low | out
 let scope = 'all';     // 'all' (totale) | warehouseId
 
+// ---- Visuale Schede (modalità dedicata della vista Magazzino) ----
+// Stato dei filtri in memoria di vista (non persistito): si azzera solo con "Azzera".
+const SCHEDE_STEP = 50;                         // schede mostrate per volta (rendering incrementale)
+const SCHEDE_PERIODS = [['all', 'Tutto'], ['7', 'Ultimi 7 giorni'], ['30', 'Ultimo mese'], ['90', 'Ultimi 3 mesi']];
+let mode = 'stock';                             // 'stock' (giacenze) | 'schede'
+let sq = '';                                    // ricerca schede: prodotto nelle righe o nota
+let sTipo = 'all';                              // all | carico | prelievo | transfer
+let sWh = 'all';                                // all | warehouseId (coinvolto come origine O destinazione)
+let sPeriod = 'all';                            // all | 7 | 30 | 90 (giorni)
+let schedeShown = SCHEDE_STEP;                  // quante schede sono visibili ora
+// timestamp minimo per il filtro periodo (0 = nessun limite)
+const periodCutoff = v => v === 'all' ? 0 : Date.now() - (+v) * 86400000;
+
 // stato di un prodotto sul TOTALE (coerente con dashboard): out | low | ok
 const status = p => { const s = totalStock(p), m = p.minStock || 0; if (s <= 0) return 'out'; if (m > 0 && s <= m) return 'low'; return 'ok'; };
 // quantità mostrata secondo lo scope selezionato (totale o magazzino singolo)
@@ -48,6 +61,7 @@ const badge = p => {
 export function render() {
   const l = activeLocaleObj();
   if (!l) return `<div class="pagehead"><h1>Magazzino</h1></div><div class="card"><div class="empty">Crea un locale dalle Impostazioni.</div></div>`;
+  if (mode === 'schede') return renderSchede(activeLocale(), l);
   const lid = activeLocale();
   const whs = warehousesOf(lid);
   if (scope !== 'all' && !whs.some(w => w.id === scope)) scope = 'all'; // scope non più valido → totale
@@ -564,34 +578,85 @@ function batchSheet(lid, after) {
 function fmtSchedaDate(s) {
   return s.ts ? new Date(s.ts).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' }) : (s.date || '');
 }
-function schedeSheet(lid, after) {
-  const list = schede(lid);
-  const body = !list.length
-    ? `<div class="card empty" style="padding:18px">Nessuna scheda.<br><span class="muted">Trasferimenti e prelievi multi-prodotto compaiono qui.</span></div>`
-    : `<div class="list">${list.map(s => {
-        const pezzi = s.lines.reduce((a, ln) => a + (ln.qty || 0), 0);
-        const route = s.type === 'transfer'
-          ? `${esc(warehouseName(lid, s.fromWh))} → ${esc(warehouseName(lid, s.toWh))}`
-          : s.type === 'carico'
-            ? `<span class="muted">esterno</span> → ${esc(warehouseName(lid, s.toWh))}`
-            : `${esc(warehouseName(lid, s.fromWh))} → <span class="muted">fuori magazzino</span>`;
-        const emoji = s.type === 'transfer' ? '↔️' : s.type === 'carico' ? '⬆️' : '⬇️';
-        const label = s.type === 'transfer' ? 'Trasferimento' : s.type === 'carico' ? 'Carico' : 'Prelievo';
-        return `<div class="row click" data-scheda="${esc(s.batchId)}">
-          <div class="emoji">${emoji}</div>
-          <div class="mid"><div class="t1">${label} <span class="muted" style="font-weight:500;font-size:12px">· ${esc(fmtSchedaDate(s))}</span></div>
-            <div class="t2">${route} · ${s.lines.length} rig${s.lines.length === 1 ? 'a' : 'he'} · ${pezzi} pz</div></div>
-        </div>`;
-      }).join('')}</div>`;
-  openSheet(`
-    <h2>🧾 Schede di movimento</h2>
-    <div class="sheetsub">Trasferimenti e prelievi registrati, consultabili e ristampabili.</div>
-    ${body}
-    <div class="actions"><button class="btn primary" data-close>Chiudi</button></div>`,
-    sheet => {
-      sheet.querySelector('[data-close]').onclick = () => { closeSheet(); after && after(); };
-      sheet.querySelectorAll('[data-scheda]').forEach(el => el.onclick = () => schedaDetail(lid, el.dataset.scheda, () => schedeSheet(lid, after)));
-    });
+// riga-scheda per la lista (riusata dalla visuale dedicata)
+function schedaRow(lid, s) {
+  const pezzi = s.lines.reduce((a, ln) => a + (ln.qty || 0), 0);
+  const route = s.type === 'transfer'
+    ? `${esc(warehouseName(lid, s.fromWh))} → ${esc(warehouseName(lid, s.toWh))}`
+    : s.type === 'carico'
+      ? `<span class="muted">esterno</span> → ${esc(warehouseName(lid, s.toWh))}`
+      : `${esc(warehouseName(lid, s.fromWh))} → <span class="muted">fuori magazzino</span>`;
+  const emoji = s.type === 'transfer' ? '↔️' : s.type === 'carico' ? '⬆️' : '⬇️';
+  const label = s.type === 'transfer' ? 'Trasferimento' : s.type === 'carico' ? 'Carico' : 'Prelievo';
+  return `<div class="row click" data-scheda="${esc(s.batchId)}">
+    <div class="emoji">${emoji}</div>
+    <div class="mid"><div class="t1">${label} <span class="muted" style="font-weight:500;font-size:12px">· ${esc(fmtSchedaDate(s))}</span></div>
+      <div class="t2">${route} · ${s.lines.length} rig${s.lines.length === 1 ? 'a' : 'he'} · ${pezzi} pz</div></div>
+  </div>`;
+}
+
+// Visuale dedicata "Schede di movimento": ricerca, filtri rapidi (tipo/magazzino/periodo in AND)
+// e rendering incrementale (mai tutto insieme). È una modalità della vista Magazzino.
+function renderSchede(lid, l) {
+  const whs = warehousesOf(lid);
+  if (sWh !== 'all' && !whs.some(w => w.id === sWh)) sWh = 'all';   // magazzino non più valido → tutti
+  const all = schede(lid);
+
+  // filtri combinati in AND
+  let list = all;
+  if (sTipo !== 'all') list = list.filter(s => s.type === sTipo);
+  if (sWh !== 'all') list = list.filter(s => s.fromWh === sWh || s.toWh === sWh);
+  const cut = periodCutoff(sPeriod);
+  if (cut) list = list.filter(s => (s.ts || 0) >= cut);
+  const term = sq.trim().toLowerCase();
+  if (term) list = list.filter(s => (s.note || '').toLowerCase().includes(term) || s.lines.some(ln => (ln.name || '').toLowerCase().includes(term)));
+
+  let h = `<div class="pagehead"><h1>🧾 Schede di movimento</h1><span class="sub">${esc((l.emoji || '📦') + ' ' + l.name)}</span></div>`;
+  h += `<div class="btnrow" style="margin-bottom:10px"><button class="btn sm" data-back>← Giacenze</button></div>`;
+
+  // filtri: tipo (chips) · magazzino/periodo (select) · ricerca
+  const tipoChip = (v, lbl) => `<button class="chip ${sTipo === v ? 'on' : ''}" data-stipo="${v}">${lbl}</button>`;
+  h += `<div class="chips" style="margin-bottom:8px">${tipoChip('all', 'Tutte')}${tipoChip('carico', '⬆️ Carichi')}${tipoChip('prelievo', '⬇️ Prelievi')}${tipoChip('transfer', '↔️ Trasferimenti')}</div>`;
+  const whOpts = `<option value="all">Tutti i magazzini</option>` + whs.map(w => `<option value="${w.id}" ${sWh === w.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+  const perOpts = SCHEDE_PERIODS.map(([v, lbl]) => `<option value="${v}" ${sPeriod === v ? 'selected' : ''}>${esc(lbl)}</option>`).join('');
+  h += `<div class="frow" style="margin-bottom:8px">
+    <div class="field" style="margin:0"><label>Magazzino</label><select id="s_wh">${whOpts}</select></div>
+    <div class="field" style="margin:0"><label>Periodo</label><select id="s_period">${perOpts}</select></div>
+  </div>`;
+  h += `<div class="field"><input id="s_q" placeholder="Cerca prodotto o nota…" value="${esc(sq)}"></div>`;
+
+  const anyFilter = !!term || sTipo !== 'all' || sWh !== 'all' || sPeriod !== 'all';
+  h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
+    <span class="muted" style="font-size:12.5px">${all.length} sched${all.length === 1 ? 'a' : 'e'} · ${list.length} nel filtro</span>
+    ${anyFilter ? '<button class="btn sm" data-reset>Azzera</button>' : ''}
+  </div>`;
+
+  if (!all.length) return h + `<div class="card empty" style="padding:18px">Nessuna scheda.<br><span class="muted">Carichi, prelievi e trasferimenti multi-prodotto compaiono qui.</span></div>`;
+  if (!list.length) return h + `<div class="card empty">Nessuna scheda con questi filtri.</div>`;
+
+  const visible = list.slice(0, schedeShown);
+  h += `<div class="list">${visible.map(s => schedaRow(lid, s)).join('')}</div>`;
+  if (list.length > visible.length) {
+    h += `<div class="btnrow" style="justify-content:center;margin-top:10px"><button class="btn" data-more>Mostra altri (restano ${list.length - visible.length})</button></div>`;
+  }
+  return h;
+}
+
+// interazioni della visuale Schede (chiamata da bind quando mode === 'schede')
+function bindSchede(root) {
+  const lid = activeLocale();
+  const rerender = () => { root.innerHTML = render(); bind(root); };
+  const reset = () => { schedeShown = SCHEDE_STEP; };   // ricomincia dall'inizio quando cambia un filtro
+  root.querySelector('[data-back]').onclick = () => { mode = 'stock'; rerender(); };
+  root.querySelectorAll('[data-stipo]').forEach(b => b.onclick = () => { sTipo = b.dataset.stipo; reset(); rerender(); });
+  const whSel = root.querySelector('#s_wh'); if (whSel) whSel.onchange = () => { sWh = whSel.value; reset(); rerender(); };
+  const perSel = root.querySelector('#s_period'); if (perSel) perSel.onchange = () => { sPeriod = perSel.value; reset(); rerender(); };
+  const qi = root.querySelector('#s_q');
+  if (qi) qi.oninput = () => { sq = qi.value; reset(); const pos = qi.selectionStart; rerender(); const n = root.querySelector('#s_q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+  root.querySelector('[data-reset]')?.addEventListener('click', () => { sq = ''; sTipo = 'all'; sWh = 'all'; sPeriod = 'all'; reset(); rerender(); });
+  root.querySelector('[data-more]')?.addEventListener('click', () => { schedeShown += SCHEDE_STEP; rerender(); });
+  // il dettaglio è uno sheet sopra la visuale: chiudendolo si torna qui (nessun back esplicito)
+  root.querySelectorAll('[data-scheda]').forEach(el => el.onclick = () => schedaDetail(lid, el.dataset.scheda));
 }
 function schedaDetail(lid, batchId, back) {
   const s = schedaById(lid, batchId);
@@ -624,12 +689,13 @@ function schedaDetail(lid, batchId, back) {
 }
 
 export function bind(root) {
+  if (mode === 'schede') return bindSchede(root);
   const lid = activeLocale();
   const rerender = () => { root.innerHTML = render(); bind(root); };
   root.querySelectorAll('[data-scope]').forEach(b => b.onclick = () => { scope = b.dataset.scope; rerender(); });
   root.querySelector('[data-receipts]')?.addEventListener('click', () => receiptsSheet(lid, rerender));
   root.querySelector('[data-batch]')?.addEventListener('click', () => batchSheet(lid, rerender));
-  root.querySelector('[data-schede]')?.addEventListener('click', () => schedeSheet(lid, rerender));
+  root.querySelector('[data-schede]')?.addEventListener('click', () => { mode = 'schede'; schedeShown = SCHEDE_STEP; rerender(); });
   root.querySelector('[data-managewh]')?.addEventListener('click', () => manageWarehouses(lid, rerender));
   root.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; rerender(); });
   const qi = root.querySelector('#mq');

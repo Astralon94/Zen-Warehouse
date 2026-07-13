@@ -3,7 +3,7 @@ import { esc } from '../../domain/util.js';
 import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet } from '../dom.js';
 import {
   activeLocale, activeLocaleObj, productsOf, suppliersOf, supplierName, orderQty,
-  topTypes, subTypes, type, deliveryPointsOf, orderLines,
+  topTypes, subTypes, type, deliveryPointsOf, orderLines, totalStock,
 } from '../../domain/warehouse.js';
 import { addQty, setQty, clearOrder, orderTotals, sendOrder, supplierNoteOf, setSupplierNote, clearSupplierNote } from '../../domain/orders.js';
 import { generateOrderPdfs } from '../../domain/orderpdf.js';
@@ -12,9 +12,21 @@ import { go } from '../app.js';
 
 const fmtBadge = f => f ? `<span class="badge soft" style="font-size:10px">${esc(f)}</span>` : '';
 
+// Stato scorta sul TOTALE tra i magazzini (stessa semantica di Magazzino/Dashboard):
+// out = esaurito · low = sotto la soglia minima · ok = a posto.
+const stockStatus = p => { const s = totalStock(p), m = p.minStock || 0; if (s <= 0) return 'out'; if (m > 0 && s <= m) return 'low'; return 'ok'; };
+// Indicatore compatto di scorta per la riga prodotto: "scorta N[/min]" colorato + icona.
+function stockInfo(p) {
+  const st = stockStatus(p);
+  const col = st === 'out' ? 'var(--red,#c2685f)' : st === 'low' ? 'var(--orange,#b08a4e)' : 'var(--green,#6b8f80)';
+  const min = (p.minStock || 0) > 0 ? `<span style="opacity:.6">/${p.minStock}</span>` : '';
+  const icon = st === 'low' ? ' ⚠️' : st === 'out' ? ' ⛔' : '';
+  return `<span class="tnum" style="font-weight:700;color:${col}">· scorta ${totalStock(p)}${min}${icon}</span>`;
+}
+
 // Stato dei filtri della schermata Ordine: SOLO in memoria di vista (non persistito).
-const FILT = { q: '', supplierId: '', categoryId: '' };
-const filtersActive = () => !!(FILT.q.trim() || FILT.supplierId || FILT.categoryId);
+const FILT = { q: '', supplierId: '', categoryId: '', lowOnly: false };
+const filtersActive = () => !!(FILT.q.trim() || FILT.supplierId || FILT.categoryId || FILT.lowOnly);
 
 // applica i filtri (combinati in AND) a una lista di prodotti
 function applyFilters(lid, prods) {
@@ -27,6 +39,7 @@ function applyFilters(lid, prods) {
     const t = type(lid, p.typeId);
     return !!t && t.parentId === FILT.categoryId;         // oppure su una sua sottocategoria
   });
+  if (FILT.lowOnly) list = list.filter(p => stockStatus(p) !== 'ok'); // sotto scorta o esauriti
   return list;
 }
 
@@ -40,7 +53,10 @@ function filtersBar(lid) {
       <div class="field" style="margin:0"><select id="ord_sup"><option value="">Tutti i fornitori</option>${sups.map(s => `<option value="${esc(s.id)}" ${FILT.supplierId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>
       <div class="field" style="margin:0"><select id="ord_cat"><option value="">Tutte le categorie</option>${cats.map(c => `<option value="${esc(c.id)}" ${FILT.categoryId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
     </div>
-    ${filtersActive() ? `<div style="margin-top:10px"><button class="btn sm" data-fclear>↺ Azzera filtri</button></div>` : ''}
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button class="chip ${FILT.lowOnly ? 'on' : ''}" data-flow>⚠️ Solo sotto scorta</button>
+      ${filtersActive() ? `<button class="btn sm" data-fclear>↺ Azzera filtri</button>` : ''}
+    </div>
   </div>`;
 }
 
@@ -132,7 +148,7 @@ function orderRow(lid, p) {
     : `<div class="amt tnum" style="font-weight:800;flex-shrink:0">${qty}</div>`;
   return `<div class="row ${qty > 0 ? 'sel' : ''}" data-pid="${p.id}">
     <div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}</div>
-      <div class="t2">${esc(supplierName(p.supplierId))}</div></div>
+      <div class="t2">${esc(supplierName(p.supplierId))} ${stockInfo(p)}</div></div>
     ${control}
   </div>`;
 }
@@ -148,7 +164,8 @@ export function bind(root) {
   if (qi) qi.oninput = () => { FILT.q = qi.value; const pos = qi.selectionStart; rerender(); const n = root.querySelector('#ord_q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
   root.querySelector('#ord_sup')?.addEventListener('change', e => { FILT.supplierId = e.target.value; rerender(); });
   root.querySelector('#ord_cat')?.addEventListener('change', e => { FILT.categoryId = e.target.value; rerender(); });
-  root.querySelector('[data-fclear]')?.addEventListener('click', () => { FILT.q = ''; FILT.supplierId = ''; FILT.categoryId = ''; rerender(); });
+  root.querySelector('[data-flow]')?.addEventListener('click', () => { FILT.lowOnly = !FILT.lowOnly; rerender(); });
+  root.querySelector('[data-fclear]')?.addEventListener('click', () => { FILT.q = ''; FILT.supplierId = ''; FILT.categoryId = ''; FILT.lowOnly = false; rerender(); });
 
   if (!canCompose() && !canSend()) return;   // sola lettura: nessun handler di composizione/invio
 
