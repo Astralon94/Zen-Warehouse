@@ -11,7 +11,7 @@ import {
   stockIn, stockOut, setStock, transfer, movesForProduct,
   addWarehouse, renameWarehouse, deleteWarehouse, reorderWarehouses, setWarehouseTypes,
   pendingReceipts, receiveOrderSupplier, dismissReceiptSupplier,
-  applyMovementBatch, schede, schedaById,
+  applyMovementBatch, schede, schedaById, renameScheda,
 } from '../../domain/stock.js';
 import { generateMovementSlip } from '../../domain/orderpdf.js';
 import { can } from '../../state/auth.js';
@@ -29,6 +29,8 @@ const cWhMod = () => can('magazzini.modifica');
 const cWhDel = () => can('magazzini.elimina');
 const cWhManage = () => cWhCrea() || cWhMod() || cWhDel();   // apre la gestione magazzini
 const cMove = () => cIn() || cOut();                          // pulsanti carico/scarico in riga
+// rinomina scheda = scrittura sui movimenti: basta uno qualsiasi dei permessi di scrittura magazzino
+const cRename = () => cIn() || cOut() || cAdj() || cTransfer() || cBatch();
 
 let q = '';
 let filter = 'all';    // all | low | out
@@ -484,6 +486,7 @@ function batchSheet(lid, after) {
         <div class="chips" style="margin:0">${typeChip('carico', 'Carico')}${typeChip('prelievo', 'Prelievo')}${typeChip('transfer', 'Trasferimento', whs.length < 2)}</div>
       </div>
       <div class="frow">${route}</div>
+      <div class="field"><label>Nome scheda (facoltativo)</label><input id="b_label" placeholder="Es. Inventario cantina, Rifornimento bancone"></div>
       <div class="field"><input id="b_q" placeholder="Cerca prodotto…" value="${esc(bq)}"></div>
       <div class="list" data-batchlist>${rows}</div>
       <div class="field" style="margin-top:10px"><label>Nota (opzionale)</label><input id="b_note" placeholder="${notePh}"></div>
@@ -498,12 +501,15 @@ function batchSheet(lid, after) {
   });
 
   let noteVal = '';   // nota preservata tra i ridisegni della modale
+  let labelVal = '';  // nome scheda preservato tra i ridisegni della modale
 
   const wire = sheet => {
     const noteEl = sheet.querySelector('#b_note');
+    const labelEl = sheet.querySelector('#b_label');
     if (noteEl) noteEl.value = noteVal;
-    // ridisegna la modale in-place preservando nota e quantità già inserite
-    const redraw = restore => { collect(sheet); if (noteEl) noteVal = noteEl.value; openSheet(render(), s => { wire(s); restore && restore(s); }, { wide: true }); };
+    if (labelEl) labelEl.value = labelVal;
+    // ridisegna la modale in-place preservando nome, nota e quantità già inserite
+    const redraw = restore => { collect(sheet); if (noteEl) noteVal = noteEl.value; if (labelEl) labelVal = labelEl.value; openSheet(render(), s => { wire(s); restore && restore(s); }, { wide: true }); };
 
     sheet.querySelectorAll('[data-btype]').forEach(b => b.onclick = () => {
       if (b.disabled) return;
@@ -527,6 +533,7 @@ function batchSheet(lid, after) {
       redraw(s => { const nq = s.querySelector('#b_q'); if (nq) { nq.focus(); nq.setSelectionRange(pos, pos); } });
     };
     if (noteEl) noteEl.oninput = () => { noteVal = noteEl.value; };
+    if (labelEl) labelEl.oninput = () => { labelVal = labelEl.value; };
     // aggiorna il contatore "N prodotti · M pz" dagli input correnti (senza ridisegnare la modale)
     const refreshSummary = () => {
       collect(sheet);
@@ -552,14 +559,16 @@ function batchSheet(lid, after) {
     sheet.querySelector('[data-ok]').onclick = () => {
       collect(sheet);
       if (noteEl) noteVal = noteEl.value;
+      if (labelEl) labelVal = labelEl.value;
       const note = noteVal.trim();
+      const label = labelVal.trim();
       const lines = Object.entries(qty).filter(([, v]) => v > 0).map(([productId, v]) => ({ productId, qty: v }));
       if (!lines.length) { toast('Inserisci almeno una quantità'); return; }
       if (type === 'transfer' && (!toWh || toWh === fromWh)) { toast('Scegli un magazzino di destinazione diverso'); return; }
       // payload secondo l'operazione (carico entra in carWh; prelievo esce da fromWh; trasferimento fromWh→toWh)
-      const payload = type === 'carico' ? { type, fromWh: null, toWh: carWh, note, lines }
-        : type === 'transfer' ? { type, fromWh, toWh, note, lines }
-        : { type, fromWh, toWh: null, note, lines };
+      const payload = type === 'carico' ? { type, fromWh: null, toWh: carWh, note, label, lines }
+        : type === 'transfer' ? { type, fromWh, toWh, note, label, lines }
+        : { type, fromWh, toWh: null, note, label, lines };
       const scheda = applyMovementBatch(lid, payload);
       if (!scheda) { toast(type === 'carico' ? 'Niente da caricare' : 'Niente da spostare (giacenza insufficiente)'); return; }
       closeSheet();
@@ -587,10 +596,11 @@ function schedaRow(lid, s) {
       ? `<span class="muted">esterno</span> → ${esc(warehouseName(lid, s.toWh))}`
       : `${esc(warehouseName(lid, s.fromWh))} → <span class="muted">fuori magazzino</span>`;
   const emoji = s.type === 'transfer' ? '↔️' : s.type === 'carico' ? '⬆️' : '⬇️';
-  const label = s.type === 'transfer' ? 'Trasferimento' : s.type === 'carico' ? 'Carico' : 'Prelievo';
+  const typeLabel = s.type === 'transfer' ? 'Trasferimento' : s.type === 'carico' ? 'Carico' : 'Prelievo';
+  const name = (s.label || '').trim() ? ` · <b>${esc(s.label.trim())}</b>` : '';
   return `<div class="row click" data-scheda="${esc(s.batchId)}">
     <div class="emoji">${emoji}</div>
-    <div class="mid"><div class="t1">${label} <span class="muted" style="font-weight:500;font-size:12px">· ${esc(fmtSchedaDate(s))}</span></div>
+    <div class="mid"><div class="t1">${typeLabel}${name} <span class="muted" style="font-weight:500;font-size:12px">· ${esc(fmtSchedaDate(s))}</span></div>
       <div class="t2">${route} · ${s.lines.length} rig${s.lines.length === 1 ? 'a' : 'he'} · ${pezzi} pz</div></div>
   </div>`;
 }
@@ -609,7 +619,7 @@ function renderSchede(lid, l) {
   const cut = periodCutoff(sPeriod);
   if (cut) list = list.filter(s => (s.ts || 0) >= cut);
   const term = sq.trim().toLowerCase();
-  if (term) list = list.filter(s => (s.note || '').toLowerCase().includes(term) || s.lines.some(ln => (ln.name || '').toLowerCase().includes(term)));
+  if (term) list = list.filter(s => (s.label || '').toLowerCase().includes(term) || (s.note || '').toLowerCase().includes(term) || s.lines.some(ln => (ln.name || '').toLowerCase().includes(term)));
 
   let h = `<div class="pagehead"><h1>🧾 Schede di movimento</h1><span class="sub">${esc((l.emoji || '📦') + ' ' + l.name)}</span></div>`;
   h += `<div class="btnrow" style="margin-bottom:10px"><button class="btn sm" data-back>← Giacenze</button></div>`;
@@ -623,7 +633,7 @@ function renderSchede(lid, l) {
     <div class="field" style="margin:0"><label>Magazzino</label><select id="s_wh">${whOpts}</select></div>
     <div class="field" style="margin:0"><label>Periodo</label><select id="s_period">${perOpts}</select></div>
   </div>`;
-  h += `<div class="field"><input id="s_q" placeholder="Cerca prodotto o nota…" value="${esc(sq)}"></div>`;
+  h += `<div class="field"><input id="s_q" placeholder="Cerca nome, prodotto o nota…" value="${esc(sq)}"></div>`;
 
   const anyFilter = !!term || sTipo !== 'all' || sWh !== 'all' || sPeriod !== 'all';
   h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
@@ -656,16 +666,18 @@ function bindSchede(root) {
   root.querySelector('[data-reset]')?.addEventListener('click', () => { sq = ''; sTipo = 'all'; sWh = 'all'; sPeriod = 'all'; reset(); rerender(); });
   root.querySelector('[data-more]')?.addEventListener('click', () => { schedeShown += SCHEDE_STEP; rerender(); });
   // il dettaglio è uno sheet sopra la visuale: chiudendolo si torna qui (nessun back esplicito)
-  root.querySelectorAll('[data-scheda]').forEach(el => el.onclick = () => schedaDetail(lid, el.dataset.scheda));
+  root.querySelectorAll('[data-scheda]').forEach(el => el.onclick = () => schedaDetail(lid, el.dataset.scheda, null, rerender));
 }
-function schedaDetail(lid, batchId, back) {
+function schedaDetail(lid, batchId, back, onChange) {
   const s = schedaById(lid, batchId);
   if (!s) { toast('Scheda non trovata'); back && back(); return; }
   const isTransfer = s.type === 'transfer';
   const isCarico = s.type === 'carico';
   const from = isCarico ? '<span class="muted">esterno / fornitore</span>' : esc(warehouseName(lid, s.fromWh));
   const dest = isCarico ? esc(warehouseName(lid, s.toWh)) : isTransfer ? esc(warehouseName(lid, s.toWh)) : '<span class="muted">fuori magazzino</span>';
-  const head = isCarico ? '⬆️ Carico' : isTransfer ? '↔️ Trasferimento' : '⬇️ Prelievo';
+  const type = isCarico ? '⬆️ Carico' : isTransfer ? '↔️ Trasferimento' : '⬇️ Prelievo';
+  const name = (s.label || '').trim();
+  const head = name ? `${type} · ${esc(name)}` : type;
   const pezzi = s.lines.reduce((a, ln) => a + (ln.qty || 0), 0);
   const rows = s.lines.map(ln => `<div class="row">
     <div class="mid"><div class="t1">${esc(ln.name)}</div></div>
@@ -677,13 +689,35 @@ function schedaDetail(lid, batchId, back) {
     <div class="section-title">Prodotti <span class="muted" style="font-weight:500">· ${s.lines.length} rig${s.lines.length === 1 ? 'a' : 'he'} · ${pezzi} pz</span></div>
     <div class="list">${rows}</div>
     ${s.note ? `<div class="section-title">Nota</div><div class="card" style="padding:12px">${esc(s.note)}</div>` : ''}
-    <div class="actions"><button class="btn" data-back>Indietro</button><button class="btn primary" data-print>⤓ Ristampa scheda</button></div>`,
+    <div class="actions"><button class="btn" data-back>Indietro</button>
+      ${cRename() ? '<button class="btn" data-rename>✏️ Rinomina</button>' : ''}
+      <button class="btn primary" data-print>⤓ Ristampa scheda</button></div>`,
     sheet => {
       sheet.querySelector('[data-back]').onclick = () => { closeSheet(); back && back(); };
+      sheet.querySelector('[data-rename]')?.addEventListener('click', () => renameSchedaModal(lid, s, back, onChange));
       sheet.querySelector('[data-print]').onclick = () => {
         const l = activeLocaleObj();
         const pdf = generateMovementSlip(l, s, warehousesOf(lid));
         showPdfDownloadSheet([pdf]);
+      };
+    });
+}
+
+// modal rinomina scheda: apre col nome attuale, salva via renameScheda e riapre il dettaglio aggiornato
+function renameSchedaModal(lid, s, back, onChange) {
+  openSheet(`<h2>Rinomina scheda</h2>
+    <div class="sheetsub">Nome descrittivo (facoltativo). Lascia vuoto per rimuoverlo.</div>
+    <div class="field"><label>Nome</label><input id="sc_name" value="${esc(s.label || '')}" placeholder="Es. Inventario cantina" autofocus></div>
+    <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Salva</button></div>`,
+    sheet => {
+      const reopen = () => schedaDetail(lid, s.batchId, back, onChange);
+      sheet.querySelector('[data-cancel]').onclick = reopen;
+      sheet.querySelector('[data-ok]').onclick = () => {
+        const val = sheet.querySelector('#sc_name').value.trim();
+        renameScheda(lid, s.batchId, val);
+        toast(val ? 'Scheda rinominata ✓' : 'Nome rimosso ✓');
+        onChange && onChange();   // aggiorna la lista sottostante
+        reopen();                 // riapre il dettaglio con il nome aggiornato
       };
     });
 }

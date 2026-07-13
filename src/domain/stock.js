@@ -70,8 +70,9 @@ export function movesForProduct(productId) {
 // `payload`: { type:'carico'|'prelievo'|'transfer', fromWh, toWh, note, lines:[{productId, qty}] }.
 //   carico: usa toWh (destinazione), origine esterna; prelievo: usa fromWh (origine), esce dal magazzino;
 //   transfer: usa fromWh (origine) e toWh (destinazione).
-// Ritorna la scheda { batchId, type, fromWh, toWh, note, date, ts, lines:[{productId,name,qty,format}] }.
-export function applyMovementBatch(localeId, { type, fromWh, toWh, note, lines }) {
+// `label` è il nome descrittivo (facoltativo) della scheda, salvato in ogni movimento come `batchLabel`.
+// Ritorna la scheda { batchId, type, label, fromWh, toWh, note, date, ts, lines:[{productId,name,qty,format}] }.
+export function applyMovementBatch(localeId, { type, fromWh, toWh, note, label, lines }) {
   const isTransfer = type === 'transfer';
   const isCarico = type === 'carico';
   // validazione di origini/destinazioni secondo il tipo
@@ -82,11 +83,12 @@ export function applyMovementBatch(localeId, { type, fromWh, toWh, note, lines }
   const ts = Date.now();
   const date = todayStr();
   note = (note || '').trim();
+  label = (label || '').trim();
   const out = [];
   (lines || []).forEach(ln => {
     const p = product(ln.productId); if (!p) return;
     const want = Math.floor(+ln.qty) || 0; if (want <= 0) return;
-    const extra = { batchId, batchType: type, note, name: p.name };
+    const extra = { batchId, batchType: type, note, batchLabel: label, name: p.name };
     if (isCarico) {
       // carico: entrata merce da esterno, nessun clamp (la giacenza sale)
       setWh(p, toWh, cur(p, toWh) + want);
@@ -107,7 +109,7 @@ export function applyMovementBatch(localeId, { type, fromWh, toWh, note, lines }
   });
   if (!out.length) return null;
   save();
-  return { batchId, type, fromWh: isCarico ? null : fromWh, toWh: (isTransfer || isCarico) ? toWh : null, note, date, ts, lines: out };
+  return { batchId, type, label, fromWh: isCarico ? null : fromWh, toWh: (isTransfer || isCarico) ? toWh : null, note, date, ts, lines: out };
 }
 
 // ricostruisce le schede del locale dai movimenti con `batchId`, dalla più recente
@@ -122,6 +124,7 @@ export function schede(localeId) {
       s = {
         batchId: m.batchId,
         type: bt,
+        label: m.batchLabel || '',        // nome descrittivo (vuoto per le schede pre-esistenti)
         fromWh: bt === 'transfer' ? m.fromWarehouseId : bt === 'carico' ? null : m.warehouseId,
         toWh: (bt === 'transfer' || bt === 'carico') ? m.warehouseId : null,
         note: m.note || '',
@@ -139,6 +142,20 @@ export function schede(localeId) {
 
 export function schedaById(localeId, batchId) {
   return schede(localeId).find(s => s.batchId === batchId) || null;
+}
+
+// Rinomina una scheda: aggiorna `batchLabel` su TUTTI i movimenti del batch (label vuota = rimuove il nome).
+// Modificabile in qualsiasi momento; il campo round-trippa da solo nel doc dei movimenti.
+export function renameScheda(localeId, batchId, label) {
+  label = (label || '').trim();
+  let touched = false;
+  data.stockMoves.forEach(m => {
+    if (m.localeId !== localeId || m.batchId !== batchId) return;
+    m.batchLabel = label;
+    touched = true;
+  });
+  if (touched) save();
+  return touched;
 }
 
 // chiave di raggruppamento per fornitore di una riga d'ordine ('__none__' se senza fornitore)

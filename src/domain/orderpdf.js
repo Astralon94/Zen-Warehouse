@@ -178,10 +178,17 @@ export function generateMovementSlip(locale, scheda, warehouses) {
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
   doc.text(dateStr, mr, 9.5, { align: 'right' });
 
-  // Titolo
+  // Titolo (con eventuale nome descrittivo della scheda sotto)
   let y = 26;
   doc.setTextColor(15, 23, 42); doc.setFontSize(19); doc.setFont('helvetica', 'bold');
-  doc.text(title, ml, y); y += 4;
+  doc.text(title, ml, y);
+  const slipName = (scheda.label || '').trim();
+  if (slipName) {
+    y += 7; doc.setFontSize(11); doc.setFont('helvetica', 'normal'); doc.setTextColor(0x5a, 0x4d, 0x74);
+    doc.text(doc.splitTextToSize(slipName, mr - ml)[0] || slipName, ml, y);
+    doc.setTextColor(15, 23, 42);
+  }
+  y += 4;
   doc.setDrawColor(229, 231, 235); doc.setLineWidth(0.4); doc.line(ml, y + 2, mr, y + 2); y += 11;
 
   // Box Da / A
