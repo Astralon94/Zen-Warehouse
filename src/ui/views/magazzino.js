@@ -5,7 +5,7 @@ import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet } fro
 import {
   activeLocale, activeLocaleObj, productsOf, product, supplierName,
   warehousesOf, warehouse, warehouseName, stockOf, totalStock, warehouseValue,
-  topTypes, typeName, warehouseAllowsProduct, compatibleWarehouses,
+  topTypes, subTypes, type, suppliersOf, typeName, warehouseAllowsProduct, compatibleWarehouses,
 } from '../../domain/warehouse.js';
 import {
   stockIn, stockOut, setStock, transfer, movesForProduct,
@@ -42,7 +42,7 @@ let scope = 'all';     // 'all' (totale) | warehouseId
 // Stato dei filtri in memoria di vista (non persistito): si azzera solo con "Azzera".
 const SCHEDE_STEP = 50;                         // schede mostrate per volta (rendering incrementale)
 const SCHEDE_PERIODS = [['all', 'Tutto'], ['7', 'Ultimi 7 giorni'], ['30', 'Ultimo mese'], ['90', 'Ultimi 3 mesi']];
-let mode = 'stock';                             // 'stock' (giacenze) | 'schede'
+let mode = 'stock';                             // 'stock' (giacenze) | 'schede' | 'thresholds' | 'inventory'
 let sq = '';                                    // ricerca schede: prodotto nelle righe o nota
 let sTipo = 'all';                              // all | carico | prelievo | transfer
 let sWh = 'all';                                // all | warehouseId (coinvolto come origine O destinazione)
@@ -50,6 +50,19 @@ let sPeriod = 'all';                            // all | 7 | 30 | 90 (giorni)
 let schedeShown = SCHEDE_STEP;                  // quante schede sono visibili ora
 // timestamp minimo per il filtro periodo (0 = nessun limite)
 const periodCutoff = v => v === 'all' ? 0 : Date.now() - (+v) * 86400000;
+
+// ---- Stato delle sezioni dedicate "Soglie di scorta" e "Inventario" (a tutta pagina) ----
+// Vive in memoria di vista come lo stato Schede: sopravvive ai redraw interni, si azzera all'ingresso.
+// Filtri prodotti condivisi (stessa forma { q, cat, sub, sup }): vedi pfNormalize/pfApply/pfBar/pfBind.
+const thrFilter = { q: '', cat: 'all', sub: 'all', sup: 'all' };
+let thrVals = {};                               // productId -> { min, target } (accumulati tra i redraw)
+let thrStatus = 'all';                          // all | none (senza soglie) | low (sotto soglia) | modified
+let thrSort = 'nat';                            // nat (naturale) | stock (giacenza ↑) | none (senza soglie prima)
+const invFilter = { q: '', cat: 'all', sub: 'all', sup: 'all' };
+let invWh = null;                               // magazzino su cui si sta facendo la conta
+let invCounts = {};                             // productId -> contato (accumulati tra i redraw)
+let invLabel = '';                              // nome scheda inventario
+let invStatus = 'all';                          // all | stock (con giacenza) | out (esauriti) | adjusted (rettificati)
 
 // stato di un prodotto sul TOTALE (coerente con dashboard): out | low | ok
 const status = p => { const s = totalStock(p), m = p.minStock || 0; if (s <= 0) return 'out'; if (m > 0 && s <= m) return 'low'; return 'ok'; };
@@ -66,6 +79,8 @@ export function render() {
   const l = activeLocaleObj();
   if (!l) return `<div class="pagehead"><h1>Magazzino</h1></div><div class="card"><div class="empty">Crea un locale dalle Impostazioni.</div></div>`;
   if (mode === 'schede') return renderSchede(activeLocale(), l);
+  if (mode === 'thresholds') return renderThresholds(activeLocale(), l);
+  if (mode === 'inventory') return renderInventory(activeLocale(), l);
   const lid = activeLocale();
   const whs = warehousesOf(lid);
   if (scope !== 'all' && !whs.some(w => w.id === scope)) scope = 'all'; // scope non più valido → totale
@@ -591,142 +606,254 @@ function batchSheet(lid, after) {
   openSheet(render(), wire, { wide: true });
 }
 
-// ---- Inventario (Feature 3): foglio stampabile + rettifica da conta ----
-// 1) scelta magazzino → 2) foglio PDF con giacenza attuale + colonna "Contati" → 3) inserimento conta.
-// Al conferma i prodotti con contato ≠ attuale diventano UNA scheda 'rettifica' (delta come movimenti).
-function inventoryFlow(lid, after) {
-  withWarehouse(lid, 'Inventario · scegli magazzino', whId => inventorySheet(lid, whId, after));
+// ---- Barra filtri prodotti condivisa (sezioni Soglie e Inventario) ----
+// Stato `f` = { q, cat, sub, sup }: ricerca nome + categoria › sottocategoria + fornitore. Le funzioni
+// normalizzano lo stato, filtrano una lista, producono la barra e ne cablano gli eventi, così le due
+// sezioni condividono il codice. `extra` = slot per un select specifico (stato soglie / stato inventario).
+function pfNormalize(lid, f) {
+  if (f.cat !== 'all' && !topTypes(lid).some(c => c.id === f.cat)) { f.cat = 'all'; f.sub = 'all'; }
+  if (f.cat === 'all') f.sub = 'all';
+  else if (f.sub !== 'all' && !subTypes(lid, f.cat).some(s => s.id === f.sub)) f.sub = 'all';
+  if (f.sup !== 'all' && f.sup !== '__none__' && !suppliersOf(lid).some(s => s.id === f.sup)) f.sup = 'all';
 }
-function inventorySheet(lid, whId, after) {
-  const whName = warehouseName(lid, whId);
-  // prodotti pertinenti al magazzino: ammessi dalla categoria O con giacenza qui (come il carico massivo)
-  const listAll = () => productsOf(lid).filter(p => warehouseAllowsProduct(lid, whId, p) || stockOf(p, whId) > 0);
-  const counts = {};                              // productId -> valore contato (popolato via collect)
-  let iq = '';                                    // ricerca prodotti
-  let labelVal = `Inventario ${whName} ${new Date().toLocaleDateString('it-IT')}`;
-  const valueOf = p => counts[p.id] != null ? counts[p.id] : stockOf(p, whId); // prefill = giacenza attuale
-
-  const render = () => {
-    let list = listAll();
-    const term = iq.trim().toLowerCase();
-    if (term) list = list.filter(p => p.name.toLowerCase().includes(term));
-    const rows = list.length ? list.map(p => {
-      const av = stockOf(p, whId);
-      const val = valueOf(p);
-      const diff = (parseInt(val, 10) || 0) !== av;
-      return `<div class="row">
-        <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
-          <div class="t2 muted">giac. attuale ${av}${diff ? ' · <span style="color:var(--accent)">modificato</span>' : ''}</div></div>
-        <input class="iq" data-prod="${esc(p.id)}" type="number" min="0" inputmode="numeric" value="${esc(String(val))}" style="width:64px;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg,var(--surface));color:var(--txt);font-weight:800;flex-shrink:0" aria-label="Contati">
+function pfApply(lid, f, list) {
+  let out = list;
+  const term = f.q.trim().toLowerCase();
+  if (term) out = out.filter(p => p.name.toLowerCase().includes(term));
+  // categoria: prodotto la cui categoria-top O sottocategoria coincide (come nel Database)
+  if (f.cat !== 'all') out = out.filter(p => { const t = type(lid, p.typeId); return !!t && (p.typeId === f.cat || t.parentId === f.cat); });
+  if (f.sub !== 'all') out = out.filter(p => p.typeId === f.sub);
+  if (f.sup === '__none__') out = out.filter(p => !p.supplierId);
+  else if (f.sup !== 'all') out = out.filter(p => p.supplierId === f.sup);
+  return out;
+}
+const pfActive = f => !!f.q.trim() || f.cat !== 'all' || f.sub !== 'all' || f.sup !== 'all';
+function pfBar(lid, f, extra = '') {
+  const catOpts = `<option value="all">Tutte le categorie</option>` + topTypes(lid).map(c => `<option value="${esc(c.id)}" ${f.cat === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  const subs = f.cat !== 'all' ? subTypes(lid, f.cat) : [];
+  const subField = subs.length ? `<div class="field" style="margin:0;min-width:0"><label>Sottocategoria</label><select id="pf_sub"><option value="all">Tutte</option>${subs.map(s => `<option value="${esc(s.id)}" ${f.sub === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>` : '';
+  const supOpts = `<option value="all">Tutti i fornitori</option>` + suppliersOf(lid).map(s => `<option value="${esc(s.id)}" ${f.sup === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('') + `<option value="__none__" ${f.sup === '__none__' ? 'selected' : ''}>— Senza fornitore —</option>`;
+  return `
+      <div class="field"><input id="pf_q" placeholder="Cerca prodotto…" value="${esc(f.q)}"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:8px">
+        <div class="field" style="margin:0;min-width:0"><label>Categoria</label><select id="pf_cat">${catOpts}</select></div>
+        ${subField}
+        <div class="field" style="margin:0;min-width:0"><label>Fornitore</label><select id="pf_sup">${supOpts}</select></div>
+        ${extra}
       </div>`;
-    }).join('') : `<div class="card empty" style="padding:14px">Nessun prodotto per questo magazzino.</div>`;
-    return `
-      <h2>📋 Inventario · ${esc(whName)}</h2>
-      <div class="sheetsub">Stampa il foglio per la conta fisica, poi inserisci qui i valori contati. Le differenze diventano una rettifica.</div>
-      <div class="btnrow" style="margin-bottom:10px"><button class="btn" data-print>⤓ Stampa foglio inventario (PDF)</button></div>
-      <div class="field"><label>Nome scheda</label><input id="inv_label" value="${esc(labelVal)}"></div>
-      <div class="field"><input id="inv_q" placeholder="Cerca prodotto…" value="${esc(iq)}"></div>
-      <div class="list" data-invlist>${rows}</div>
-      <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Conferma rettifica</button></div>`;
-  };
-
-  const collect = sheet => sheet.querySelectorAll('.iq').forEach(inp => { counts[inp.dataset.prod] = parseInt(inp.value, 10) || 0; });
-
-  const wire = sheet => {
-    const labelEl = sheet.querySelector('#inv_label');
-    if (labelEl) { labelEl.value = labelVal; labelEl.oninput = () => { labelVal = labelEl.value; }; }
-    const redraw = restore => { collect(sheet); if (labelEl) labelVal = labelEl.value; openSheet(render(), s => { wire(s); restore && restore(s); }, { wide: true }); };
-    const qi = sheet.querySelector('#inv_q');
-    if (qi) qi.oninput = () => { iq = qi.value; const pos = qi.selectionStart; redraw(s => { const n = s.querySelector('#inv_q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } }); };
-    sheet.querySelectorAll('.iq').forEach(inp => inp.oninput = () => { counts[inp.dataset.prod] = parseInt(inp.value, 10) || 0; });
-    sheet.querySelector('[data-print]').onclick = () => {
-      const prods = listAll().map(p => ({ name: p.name, format: p.format || '', stock: stockOf(p, whId) }));
-      const pdf = generateInventorySheet(activeLocaleObj(), warehouse(lid, whId), prods);
-      showPdfDownloadSheet([pdf]);
-    };
-    sheet.querySelector('[data-cancel]').onclick = closeSheet;
-    sheet.querySelector('[data-ok]').onclick = () => {
-      collect(sheet);
-      const label = (labelEl ? labelEl.value : labelVal).trim();
-      const scheda = applyInventoryBatch(lid, whId, counts, label);
-      if (!scheda) { toast('Nessuna differenza rilevata'); return; }
-      closeSheet();
-      const n = scheda.lines.length;
-      toast(`Inventario registrato ✓ · ${n} rettific${n === 1 ? 'a' : 'he'}`);
-      after && after();
-    };
-  };
-
-  openSheet(render(), wire, { wide: true });
+}
+// cabla ricerca + select condivisi. `rerender` DEVE raccogliere gli input di sezione prima di ridisegnare
+// (così i valori digitati su righe che escono dal filtro non vanno persi).
+function pfBind(root, f, rerender) {
+  const qi = root.querySelector('#pf_q');
+  if (qi) qi.oninput = () => { f.q = qi.value; const pos = qi.selectionStart; rerender(); const n = root.querySelector('#pf_q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+  const catSel = root.querySelector('#pf_cat'); if (catSel) catSel.onchange = () => { f.cat = catSel.value; f.sub = 'all'; rerender(); };
+  const subSel = root.querySelector('#pf_sub'); if (subSel) subSel.onchange = () => { f.sub = subSel.value; rerender(); };
+  const supSel = root.querySelector('#pf_sup'); if (supSel) supSel.onchange = () => { f.sup = supSel.value; rerender(); };
 }
 
-// ---- Editor massivo soglie di scorta (soglia minima + scorta target, riga per riga) ----
-// Una schermata unica per scorrere tutti i prodotti del locale e digitare i due valori,
-// salvando in un colpo solo (applyStockThresholds → una sola save). Soglia minima = avviso
-// sotto scorta sul totale; scorta target = obiettivo usato dalla proposta d'ordine.
-function thresholdsSheet(lid, after) {
-  const vals = {};                                // productId -> { min, target } (interi, raccolti via collect)
-  let tq = '';                                    // ricerca prodotti
-  const curMin = p => vals[p.id]?.min != null ? vals[p.id].min : (p.minStock || 0);
-  const curTarget = p => vals[p.id]?.target != null ? vals[p.id].target : (p.targetStock || 0);
-  const inputStyle = 'width:64px;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg,var(--surface));color:var(--txt);font-weight:800;flex-shrink:0';
+// riga numerica compatta (condivisa da Soglie e Inventario)
+const NUMBOX = 'width:64px;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg,var(--surface));color:var(--txt);font-weight:800;flex-shrink:0';
+// meta riga (giacenza · fornitore · categoria) per le sezioni a tutta pagina (più spazio della sheet)
+function prodMeta(lid, p, first) {
+  const sup = supplierName(p.supplierId);
+  const cat = p.typeId ? typeName(lid, p.typeId) : '';
+  return [first, sup && sup !== '—' ? esc(sup) : null, cat && cat !== '—' ? esc(cat) : null].filter(Boolean).join(' · ');
+}
 
-  const render = () => {
-    let list = productsOf(lid);
-    const term = tq.trim().toLowerCase();
-    if (term) list = list.filter(p => p.name.toLowerCase().includes(term));
-    const rows = list.length ? list.map((p, i) => {
-      const dMin = curMin(p), dTarget = curTarget(p);
-      const modified = dMin !== (p.minStock || 0) || dTarget !== (p.targetStock || 0);
-      return `<div class="row">
-        <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
-          <div class="t2 muted">giac. ${totalStock(p)}${modified ? ' · <span style="color:var(--accent)">modificato</span>' : ''}</div></div>
-        <div style="display:flex;gap:6px;flex-shrink:0">
-          <input class="thr" data-prod="${esc(p.id)}" data-col="min" data-idx="${i}" type="number" min="0" inputmode="numeric" placeholder="0" value="${dMin > 0 ? esc(String(dMin)) : ''}" style="${inputStyle}" aria-label="Soglia minima">
-          <input class="thr" data-prod="${esc(p.id)}" data-col="target" data-idx="${i}" type="number" min="0" inputmode="numeric" placeholder="0" value="${dTarget > 0 ? esc(String(dTarget)) : ''}" style="${inputStyle}" aria-label="Scorta target">
-        </div>
-      </div>`;
-    }).join('') : `<div class="card empty" style="padding:14px">Nessun prodotto.</div>`;
-    return `
-      <h2>🎯 Soglie di scorta</h2>
-      <div class="sheetsub">Soglia minima = avviso sotto scorta sul totale tra i magazzini. Scorta target = obiettivo usato dalla proposta d'ordine. Compila riga per riga e salva in un colpo solo.</div>
-      <div class="field"><input id="thr_q" placeholder="Cerca prodotto…" value="${esc(tq)}"></div>
-      <div style="display:flex;justify-content:flex-end;gap:6px;margin:0 2px 2px 0"><span class="muted" style="width:64px;text-align:center;font-size:11px">min</span><span class="muted" style="width:64px;text-align:center;font-size:11px">target</span></div>
-      <div class="list" data-thrlist>${rows}</div>
-      <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Salva soglie</button></div>`;
+// ---- Inventario: sezione dedicata a tutta pagina (conta fisica per magazzino → rettifica) ----
+// Stampa il foglio, inserisci i valori contati: i prodotti con contato ≠ attuale diventano UNA
+// scheda 'rettifica' (delta come movimenti). Scelta magazzino inline, filtri prodotti condivisi.
+const invDefaultLabel = (lid, whId) => `Inventario ${warehouseName(lid, whId)} ${new Date().toLocaleDateString('it-IT')}`;
+// prodotti pertinenti a un magazzino: ammessi dalla categoria O con giacenza qui (come il carico massivo)
+const invBase = (lid, whId) => productsOf(lid).filter(p => warehouseAllowsProduct(lid, whId, p) || stockOf(p, whId) > 0);
+const invCounted = p => invCounts[p.id] != null ? invCounts[p.id] : null;   // contato (null = riga intatta)
+const invAdjusted = p => { const c = invCounted(p); return c != null && c !== stockOf(p, invWh); };
+
+function renderInventory(lid, l) {
+  const whs = warehousesOf(lid);
+  let h = `<div class="pagehead"><h1>📋 Inventario</h1><span class="sub">${esc((l.emoji || '📦') + ' ' + l.name)}</span></div>`;
+  h += `<div class="btnrow" style="margin-bottom:10px"><button class="btn sm" data-back>← Giacenze</button></div>`;
+  if (!whs.length) return h + `<div class="card empty">Nessun magazzino.<br><span class="muted">Crea un magazzino per fare l'inventario.</span></div>`;
+  if (!invWh || !whs.some(w => w.id === invWh)) invWh = whs[0].id;
+  pfNormalize(lid, invFilter);
+
+  const base = invBase(lid, invWh);
+  let list = pfApply(lid, invFilter, base);
+  if (invStatus === 'stock') list = list.filter(p => stockOf(p, invWh) > 0);
+  else if (invStatus === 'out') list = list.filter(p => stockOf(p, invWh) <= 0);
+  else if (invStatus === 'adjusted') list = list.filter(invAdjusted);
+  const dirtyN = base.filter(invAdjusted).length;
+
+  const whOpts = whs.map(w => `<option value="${w.id}" ${w.id === invWh ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+  h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+    <div class="muted" style="font-size:12.5px;min-width:0">Conta fisica per magazzino: stampa il foglio, poi inserisci i valori contati. Le differenze diventano una rettifica.</div>
+    <div style="display:flex;gap:6px;flex-shrink:0">
+      <button class="btn sm" data-print>⤓ Foglio PDF</button>
+      <button class="btn sm primary" data-save ${dirtyN ? '' : 'disabled'}>Conferma rettifica${dirtyN ? ` · ${dirtyN}` : ''}</button>
+    </div>
+  </div>`;
+  h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-bottom:8px">
+    <div class="field" style="margin:0;min-width:0"><label>Magazzino</label><select id="inv_wh">${whOpts}</select></div>
+    <div class="field" style="margin:0;min-width:0"><label>Nome scheda</label><input id="inv_label" value="${esc(invLabel)}"></div>
+  </div>`;
+
+  const statusOpts = [['all', 'Tutti'], ['stock', 'Con giacenza'], ['out', 'Esauriti'], ['adjusted', 'Rettificati']].map(([v, t]) => `<option value="${v}" ${invStatus === v ? 'selected' : ''}>${esc(t)}</option>`).join('');
+  h += pfBar(lid, invFilter, `<div class="field" style="margin:0;min-width:0"><label>Stato</label><select id="inv_status">${statusOpts}</select></div>`);
+  const anyFilter = pfActive(invFilter) || invStatus !== 'all';
+  h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 2px 8px">
+    <span class="muted" style="font-size:12.5px">${list.length} prodott${list.length === 1 ? 'o' : 'i'}${dirtyN ? ` · <span style="color:var(--accent)">${dirtyN} da rettificare</span>` : ''}</span>
+    ${anyFilter ? '<button class="btn sm" data-inv-reset>Azzera filtri</button>' : ''}
+  </div>`;
+  h += `<div style="display:flex;justify-content:flex-end;margin:0 2px 4px 0"><span class="muted" style="width:64px;text-align:center;font-size:11px">contati</span></div>`;
+  if (!list.length) return h + `<div class="card empty">${base.length ? 'Nessun prodotto con questi filtri.' : 'Nessun prodotto per questo magazzino.'}</div>`;
+  h += `<div class="list" data-invlist>${list.map(p => {
+    const av = stockOf(p, invWh);
+    const val = invCounted(p) != null ? invCounted(p) : av;
+    const diff = (parseInt(val, 10) || 0) !== av;
+    return `<div class="row">
+      <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
+        <div class="t2 muted">${prodMeta(lid, p, 'giac. attuale ' + av)}${diff ? ' · <span style="color:var(--accent)">modificato</span>' : ''}</div></div>
+      <input class="iq" data-prod="${esc(p.id)}" type="number" min="0" inputmode="numeric" value="${esc(String(val))}" style="${NUMBOX}" aria-label="Contati">
+    </div>`;
+  }).join('')}</div>`;
+  return h;
+}
+
+function bindInventory(root) {
+  const lid = activeLocale();
+  const collectInv = () => root.querySelectorAll('.iq').forEach(inp => { invCounts[inp.dataset.prod] = parseInt(inp.value, 10) || 0; });
+  const dirtyCount = () => { collectInv(); return productsOf(lid).filter(p => { const c = invCounts[p.id]; return c != null && c !== stockOf(p, invWh); }).length; };
+  const rerender = () => { collectInv(); root.innerHTML = render(); bind(root); };
+  const goStock = () => { mode = 'stock'; root.innerHTML = render(); bind(root); };
+  root.querySelector('[data-back]').onclick = () => {
+    if (dirtyCount()) confirmDialog('Uscire dall\'inventario?', 'Ci sono conte non salvate: uscendo vengono perse.', 'Esci', () => { invCounts = {}; goStock(); }, { danger: true });
+    else goStock();
   };
-
-  // raccoglie i due valori di ogni riga visibile in `vals` (accumula tra i ridisegni)
-  const collect = sheet => sheet.querySelectorAll('.thr').forEach(inp => {
-    (vals[inp.dataset.prod] || (vals[inp.dataset.prod] = {}))[inp.dataset.col] = parseInt(inp.value, 10) || 0;
+  const whSel = root.querySelector('#inv_wh');
+  if (whSel) whSel.onchange = () => {
+    const target = whSel.value;
+    const doSwitch = () => { invWh = target; invCounts = {}; invLabel = invDefaultLabel(lid, invWh); rerender(); };
+    if (dirtyCount()) { whSel.value = invWh; confirmDialog('Cambiare magazzino?', 'Le conte non salvate di questo magazzino verranno perse.', 'Cambia', doSwitch, { danger: true }); }
+    else doSwitch();
+  };
+  const labelEl = root.querySelector('#inv_label'); if (labelEl) labelEl.oninput = () => { invLabel = labelEl.value; };
+  pfBind(root, invFilter, rerender);
+  const stSel = root.querySelector('#inv_status'); if (stSel) stSel.onchange = () => { invStatus = stSel.value; rerender(); };
+  root.querySelector('[data-inv-reset]')?.addEventListener('click', () => { invFilter.q = ''; invFilter.cat = 'all'; invFilter.sub = 'all'; invFilter.sup = 'all'; invStatus = 'all'; rerender(); });
+  root.querySelectorAll('.iq').forEach(inp => inp.oninput = () => {
+    invCounts[inp.dataset.prod] = parseInt(inp.value, 10) || 0;
+    const btn = root.querySelector('[data-save]'); if (!btn) return;
+    const n = productsOf(lid).filter(p => { const c = invCounts[p.id]; return c != null && c !== stockOf(p, invWh); }).length;
+    btn.disabled = !n; btn.textContent = 'Conferma rettifica' + (n ? ` · ${n}` : '');
   });
-
-  const wire = sheet => {
-    const redraw = restore => { collect(sheet); openSheet(render(), s => { wire(s); restore && restore(s); }, { wide: true }); };
-    const qi = sheet.querySelector('#thr_q');
-    if (qi) qi.oninput = () => { tq = qi.value; const pos = qi.selectionStart; redraw(s => { const n = s.querySelector('#thr_q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } }); };
-    sheet.querySelectorAll('.thr').forEach(inp => {
-      inp.oninput = () => { (vals[inp.dataset.prod] || (vals[inp.dataset.prod] = {}))[inp.dataset.col] = parseInt(inp.value, 10) || 0; };
-      // Invio → passa all'input successivo della stessa colonna
-      inp.onkeydown = e => {
-        if (e.key !== 'Enter') return;
-        e.preventDefault();
-        const next = sheet.querySelector(`.thr[data-col="${inp.dataset.col}"][data-idx="${(+inp.dataset.idx) + 1}"]`);
-        if (next) { next.focus(); next.select(); }
-      };
-    });
-    sheet.querySelector('[data-cancel]').onclick = closeSheet;
-    sheet.querySelector('[data-ok]').onclick = () => {
-      collect(sheet);
-      const n = applyStockThresholds(lid, vals);
-      if (!n) { toast('Nessuna modifica'); return; }
-      closeSheet();
-      toast(`Soglie aggiornate ✓ · ${n} prodott${n === 1 ? 'o' : 'i'}`);
-      after && after();
-    };
+  root.querySelector('[data-print]').onclick = () => {
+    const prods = invBase(lid, invWh).map(p => ({ name: p.name, format: p.format || '', stock: stockOf(p, invWh) }));
+    const pdf = generateInventorySheet(activeLocaleObj(), warehouse(lid, invWh), prods);
+    showPdfDownloadSheet([pdf]);
   };
+  root.querySelector('[data-save]').onclick = () => {
+    collectInv();
+    const scheda = applyInventoryBatch(lid, invWh, invCounts, invLabel.trim());
+    if (!scheda) { toast('Nessuna differenza rilevata'); return; }
+    const n = scheda.lines.length;
+    toast(`Inventario registrato ✓ · ${n} rettific${n === 1 ? 'a' : 'he'}`);
+    invCounts = {}; invLabel = invDefaultLabel(lid, invWh);
+    root.innerHTML = render(); bind(root);
+  };
+}
 
-  openSheet(render(), wire, { wide: true });
+// ---- Soglie di scorta: sezione dedicata a tutta pagina (soglia minima + scorta target) ----
+// Scorri i prodotti del locale, digita i due valori e salva in un colpo solo (una sola save).
+// Soglia minima = avviso sotto scorta sul totale; scorta target = obiettivo della proposta d'ordine.
+// I valori CORRENTI (sessione) riflettono le modifiche già digitate (thrVals), non solo il salvato.
+const thrCurMin = p => thrVals[p.id]?.min != null ? thrVals[p.id].min : (p.minStock || 0);
+const thrCurTarget = p => thrVals[p.id]?.target != null ? thrVals[p.id].target : (p.targetStock || 0);
+const thrHasThr = p => thrCurMin(p) > 0 || thrCurTarget(p) > 0;                     // ha almeno una soglia impostata
+const thrModified = p => thrCurMin(p) !== (p.minStock || 0) || thrCurTarget(p) !== (p.targetStock || 0);
+
+function renderThresholds(lid, l) {
+  pfNormalize(lid, thrFilter);
+  const all = productsOf(lid);
+  let list = pfApply(lid, thrFilter, all);
+  if (thrStatus === 'none') list = list.filter(p => !thrHasThr(p));
+  else if (thrStatus === 'low') list = list.filter(p => thrCurMin(p) > 0 && totalStock(p) < thrCurMin(p));
+  else if (thrStatus === 'modified') list = list.filter(thrModified);
+  if (thrSort === 'stock') list = list.slice().sort((a, b) => totalStock(a) - totalStock(b));
+  else if (thrSort === 'none') list = list.slice().sort((a, b) => (thrHasThr(a) ? 1 : 0) - (thrHasThr(b) ? 1 : 0));
+  const dirtyN = all.filter(thrModified).length;
+
+  let h = `<div class="pagehead"><h1>🎯 Soglie di scorta</h1><span class="sub">${esc((l.emoji || '📦') + ' ' + l.name)}</span></div>`;
+  h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+    <button class="btn sm" data-back>← Giacenze</button>
+    <button class="btn sm primary" data-save ${dirtyN ? '' : 'disabled'}>Salva soglie${dirtyN ? ` · ${dirtyN}` : ''}</button>
+  </div>`;
+  h += `<div class="muted" style="font-size:12.5px;margin:-2px 2px 10px">Soglia minima = avviso sotto scorta sul totale tra i magazzini. Scorta target = obiettivo usato dalla proposta d'ordine. Compila e salva in un colpo solo.</div>`;
+
+  const statusOpts = [['all', 'Tutti'], ['none', 'Senza soglie'], ['low', 'Sotto soglia'], ['modified', 'Modificati']].map(([v, t]) => `<option value="${v}" ${thrStatus === v ? 'selected' : ''}>${esc(t)}</option>`).join('');
+  const sortOpts = [['nat', 'Ordine naturale'], ['stock', 'Giacenza ↑'], ['none', 'Senza soglie prima']].map(([v, t]) => `<option value="${v}" ${thrSort === v ? 'selected' : ''}>${esc(t)}</option>`).join('');
+  h += pfBar(lid, thrFilter, `<div class="field" style="margin:0;min-width:0"><label>Stato soglie</label><select id="thr_status">${statusOpts}</select></div>
+        <div class="field" style="margin:0;min-width:0"><label>Ordina</label><select id="thr_sort">${sortOpts}</select></div>`);
+  const anyFilter = pfActive(thrFilter) || thrStatus !== 'all' || thrSort !== 'nat';
+  h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 2px 8px">
+    <span class="muted" style="font-size:12.5px">${list.length} prodott${list.length === 1 ? 'o' : 'i'}${dirtyN ? ` · <span style="color:var(--accent)">${dirtyN} modificat${dirtyN === 1 ? 'o' : 'i'}</span>` : ''}</span>
+    ${anyFilter ? '<button class="btn sm" data-thr-reset>Azzera filtri</button>' : ''}
+  </div>`;
+  h += `<div style="display:flex;justify-content:flex-end;gap:6px;margin:0 2px 4px 0"><span class="muted" style="width:64px;text-align:center;font-size:11px">min</span><span class="muted" style="width:64px;text-align:center;font-size:11px">target</span></div>`;
+  if (!list.length) return h + `<div class="card empty">${all.length ? 'Nessun prodotto con questi filtri.' : 'Nessun prodotto.'}</div>`;
+  h += `<div class="list" data-thrlist>${list.map((p, i) => {
+    const dMin = thrCurMin(p), dTarget = thrCurTarget(p);
+    return `<div class="row">
+      <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
+        <div class="t2 muted">${prodMeta(lid, p, 'giac. ' + totalStock(p))}${thrModified(p) ? ' · <span style="color:var(--accent)">modificato</span>' : ''}</div></div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <input class="thr" data-prod="${esc(p.id)}" data-col="min" data-idx="${i}" type="number" min="0" inputmode="numeric" placeholder="0" value="${dMin > 0 ? esc(String(dMin)) : ''}" style="${NUMBOX}" aria-label="Soglia minima">
+        <input class="thr" data-prod="${esc(p.id)}" data-col="target" data-idx="${i}" type="number" min="0" inputmode="numeric" placeholder="0" value="${dTarget > 0 ? esc(String(dTarget)) : ''}" style="${NUMBOX}" aria-label="Scorta target">
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+  return h;
+}
+
+function bindThresholds(root) {
+  const lid = activeLocale();
+  // accumula i due valori di ogni riga visibile in thrVals (prima di ogni redraw): le righe che escono
+  // dal filtro NON perdono le modifiche, che restano in thrVals e si salvano comunque tutte.
+  const collectThr = () => root.querySelectorAll('.thr').forEach(inp => { (thrVals[inp.dataset.prod] || (thrVals[inp.dataset.prod] = {}))[inp.dataset.col] = parseInt(inp.value, 10) || 0; });
+  const rerender = () => { collectThr(); root.innerHTML = render(); bind(root); };
+  const goStock = () => { mode = 'stock'; root.innerHTML = render(); bind(root); };
+  root.querySelector('[data-back]').onclick = () => {
+    collectThr();
+    if (productsOf(lid).some(thrModified)) confirmDialog('Uscire dalle soglie?', 'Ci sono soglie non salvate: uscendo vengono perse.', 'Esci', () => { thrVals = {}; goStock(); }, { danger: true });
+    else goStock();
+  };
+  pfBind(root, thrFilter, rerender);
+  const stSel = root.querySelector('#thr_status'); if (stSel) stSel.onchange = () => { thrStatus = stSel.value; rerender(); };
+  const soSel = root.querySelector('#thr_sort'); if (soSel) soSel.onchange = () => { thrSort = soSel.value; rerender(); };
+  root.querySelector('[data-thr-reset]')?.addEventListener('click', () => { thrFilter.q = ''; thrFilter.cat = 'all'; thrFilter.sub = 'all'; thrFilter.sup = 'all'; thrStatus = 'all'; thrSort = 'nat'; rerender(); });
+  root.querySelectorAll('.thr').forEach(inp => {
+    inp.oninput = () => {
+      (thrVals[inp.dataset.prod] || (thrVals[inp.dataset.prod] = {}))[inp.dataset.col] = parseInt(inp.value, 10) || 0;
+      const btn = root.querySelector('[data-save]'); if (!btn) return;
+      const n = productsOf(lid).filter(thrModified).length;
+      btn.disabled = !n; btn.textContent = 'Salva soglie' + (n ? ` · ${n}` : '');
+    };
+    // Invio → passa all'input successivo della stessa colonna
+    inp.onkeydown = e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const next = root.querySelector(`.thr[data-col="${inp.dataset.col}"][data-idx="${(+inp.dataset.idx) + 1}"]`);
+      if (next) { next.focus(); next.select(); }
+    };
+  });
+  root.querySelector('[data-save]').onclick = () => {
+    collectThr();
+    const n = applyStockThresholds(lid, thrVals);
+    if (!n) { toast('Nessuna modifica'); return; }
+    toast(`Soglie aggiornate ✓ · ${n} prodott${n === 1 ? 'o' : 'i'}`);
+    thrVals = {};
+    root.innerHTML = render(); bind(root);
+  };
 }
 
 // ---- Storico schede di movimento (consultazione + ristampa) ----
@@ -875,13 +1002,27 @@ function renameSchedaModal(lid, s, back, onChange) {
 
 export function bind(root) {
   if (mode === 'schede') return bindSchede(root);
+  if (mode === 'thresholds') return bindThresholds(root);
+  if (mode === 'inventory') return bindInventory(root);
   const lid = activeLocale();
   const rerender = () => { root.innerHTML = render(); bind(root); };
   root.querySelectorAll('[data-scope]').forEach(b => b.onclick = () => { scope = b.dataset.scope; rerender(); });
   root.querySelector('[data-receipts]')?.addEventListener('click', () => receiptsSheet(lid, rerender));
   root.querySelector('[data-batch]')?.addEventListener('click', () => batchSheet(lid, rerender));
-  root.querySelector('[data-inventory]')?.addEventListener('click', () => inventoryFlow(lid, rerender));
-  root.querySelector('[data-thresholds]')?.addEventListener('click', () => thresholdsSheet(lid, rerender));
+  root.querySelector('[data-inventory]')?.addEventListener('click', () => {
+    const whs = warehousesOf(lid);
+    if (!whs.length) { toast('Nessun magazzino'); return; }
+    mode = 'inventory'; invCounts = {}; invStatus = 'all';
+    invFilter.q = ''; invFilter.cat = 'all'; invFilter.sub = 'all'; invFilter.sup = 'all';
+    invWh = (scope !== 'all' && whs.some(w => w.id === scope)) ? scope : whs[0].id;
+    invLabel = invDefaultLabel(lid, invWh);
+    rerender();
+  });
+  root.querySelector('[data-thresholds]')?.addEventListener('click', () => {
+    mode = 'thresholds'; thrVals = {}; thrStatus = 'all'; thrSort = 'nat';
+    thrFilter.q = ''; thrFilter.cat = 'all'; thrFilter.sub = 'all'; thrFilter.sup = 'all';
+    rerender();
+  });
   root.querySelector('[data-schede]')?.addEventListener('click', () => { mode = 'schede'; schedeShown = SCHEDE_STEP; rerender(); });
   root.querySelector('[data-managewh]')?.addEventListener('click', () => manageWarehouses(lid, rerender));
   root.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; rerender(); });
