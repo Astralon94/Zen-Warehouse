@@ -14,6 +14,7 @@ import {
   applyMovementBatch, applyInventoryBatch, schede, schedaById, renameScheda,
 } from '../../domain/stock.js';
 import { generateMovementSlip, generateInventorySheet } from '../../domain/orderpdf.js';
+import { applyStockThresholds } from '../../domain/catalog.js';
 import { can } from '../../state/auth.js';
 import { makeSortable } from '../sortable.js';
 
@@ -24,6 +25,7 @@ const cAdj = () => can('magazzino.rettifica');
 const cTransfer = () => can('magazzino.trasferimento');
 const cBatch = () => can('magazzino.massivo');
 const cReceive = () => can('magazzino.ricevi');
+const cThr = () => can('prodotti.modifica');   // editor massivo soglie = anagrafica prodotto
 const cWhCrea = () => can('magazzini.crea');
 const cWhMod = () => can('magazzini.modifica');
 const cWhDel = () => can('magazzini.elimina');
@@ -81,6 +83,7 @@ export function render() {
       ${cReceive() ? `<button class="btn sm primary" data-receipts>📥 Carico da ordini${pendBadge}</button>` : ''}
       ${cBatch() ? '<button class="btn sm" data-batch>⇅ Movimento massivo</button>' : ''}
       ${cAdj() ? '<button class="btn sm" data-inventory>📋 Inventario</button>' : ''}
+      ${cThr() ? '<button class="btn sm" data-thresholds>🎯 Soglie scorta</button>' : ''}
       <button class="btn sm" data-schede>🧾 Schede</button>
       ${cWhManage() ? '<button class="btn sm" data-managewh>⚙︎ Gestisci magazzini</button>' : ''}
     </div>
@@ -657,6 +660,75 @@ function inventorySheet(lid, whId, after) {
   openSheet(render(), wire, { wide: true });
 }
 
+// ---- Editor massivo soglie di scorta (soglia minima + scorta target, riga per riga) ----
+// Una schermata unica per scorrere tutti i prodotti del locale e digitare i due valori,
+// salvando in un colpo solo (applyStockThresholds → una sola save). Soglia minima = avviso
+// sotto scorta sul totale; scorta target = obiettivo usato dalla proposta d'ordine.
+function thresholdsSheet(lid, after) {
+  const vals = {};                                // productId -> { min, target } (interi, raccolti via collect)
+  let tq = '';                                    // ricerca prodotti
+  const curMin = p => vals[p.id]?.min != null ? vals[p.id].min : (p.minStock || 0);
+  const curTarget = p => vals[p.id]?.target != null ? vals[p.id].target : (p.targetStock || 0);
+  const inputStyle = 'width:64px;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg,var(--surface));color:var(--txt);font-weight:800;flex-shrink:0';
+
+  const render = () => {
+    let list = productsOf(lid);
+    const term = tq.trim().toLowerCase();
+    if (term) list = list.filter(p => p.name.toLowerCase().includes(term));
+    const rows = list.length ? list.map((p, i) => {
+      const dMin = curMin(p), dTarget = curTarget(p);
+      const modified = dMin !== (p.minStock || 0) || dTarget !== (p.targetStock || 0);
+      return `<div class="row">
+        <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
+          <div class="t2 muted">giac. ${totalStock(p)}${modified ? ' · <span style="color:var(--accent)">modificato</span>' : ''}</div></div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <input class="thr" data-prod="${esc(p.id)}" data-col="min" data-idx="${i}" type="number" min="0" inputmode="numeric" placeholder="0" value="${dMin > 0 ? esc(String(dMin)) : ''}" style="${inputStyle}" aria-label="Soglia minima">
+          <input class="thr" data-prod="${esc(p.id)}" data-col="target" data-idx="${i}" type="number" min="0" inputmode="numeric" placeholder="0" value="${dTarget > 0 ? esc(String(dTarget)) : ''}" style="${inputStyle}" aria-label="Scorta target">
+        </div>
+      </div>`;
+    }).join('') : `<div class="card empty" style="padding:14px">Nessun prodotto.</div>`;
+    return `
+      <h2>🎯 Soglie di scorta</h2>
+      <div class="sheetsub">Soglia minima = avviso sotto scorta sul totale tra i magazzini. Scorta target = obiettivo usato dalla proposta d'ordine. Compila riga per riga e salva in un colpo solo.</div>
+      <div class="field"><input id="thr_q" placeholder="Cerca prodotto…" value="${esc(tq)}"></div>
+      <div style="display:flex;justify-content:flex-end;gap:6px;margin:0 2px 2px 0"><span class="muted" style="width:64px;text-align:center;font-size:11px">min</span><span class="muted" style="width:64px;text-align:center;font-size:11px">target</span></div>
+      <div class="list" data-thrlist>${rows}</div>
+      <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Salva soglie</button></div>`;
+  };
+
+  // raccoglie i due valori di ogni riga visibile in `vals` (accumula tra i ridisegni)
+  const collect = sheet => sheet.querySelectorAll('.thr').forEach(inp => {
+    (vals[inp.dataset.prod] || (vals[inp.dataset.prod] = {}))[inp.dataset.col] = parseInt(inp.value, 10) || 0;
+  });
+
+  const wire = sheet => {
+    const redraw = restore => { collect(sheet); openSheet(render(), s => { wire(s); restore && restore(s); }, { wide: true }); };
+    const qi = sheet.querySelector('#thr_q');
+    if (qi) qi.oninput = () => { tq = qi.value; const pos = qi.selectionStart; redraw(s => { const n = s.querySelector('#thr_q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } }); };
+    sheet.querySelectorAll('.thr').forEach(inp => {
+      inp.oninput = () => { (vals[inp.dataset.prod] || (vals[inp.dataset.prod] = {}))[inp.dataset.col] = parseInt(inp.value, 10) || 0; };
+      // Invio → passa all'input successivo della stessa colonna
+      inp.onkeydown = e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const next = sheet.querySelector(`.thr[data-col="${inp.dataset.col}"][data-idx="${(+inp.dataset.idx) + 1}"]`);
+        if (next) { next.focus(); next.select(); }
+      };
+    });
+    sheet.querySelector('[data-cancel]').onclick = closeSheet;
+    sheet.querySelector('[data-ok]').onclick = () => {
+      collect(sheet);
+      const n = applyStockThresholds(lid, vals);
+      if (!n) { toast('Nessuna modifica'); return; }
+      closeSheet();
+      toast(`Soglie aggiornate ✓ · ${n} prodott${n === 1 ? 'o' : 'i'}`);
+      after && after();
+    };
+  };
+
+  openSheet(render(), wire, { wide: true });
+}
+
 // ---- Storico schede di movimento (consultazione + ristampa) ----
 function fmtSchedaDate(s) {
   return s.ts ? new Date(s.ts).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' }) : (s.date || '');
@@ -809,6 +881,7 @@ export function bind(root) {
   root.querySelector('[data-receipts]')?.addEventListener('click', () => receiptsSheet(lid, rerender));
   root.querySelector('[data-batch]')?.addEventListener('click', () => batchSheet(lid, rerender));
   root.querySelector('[data-inventory]')?.addEventListener('click', () => inventoryFlow(lid, rerender));
+  root.querySelector('[data-thresholds]')?.addEventListener('click', () => thresholdsSheet(lid, rerender));
   root.querySelector('[data-schede]')?.addEventListener('click', () => { mode = 'schede'; schedeShown = SCHEDE_STEP; rerender(); });
   root.querySelector('[data-managewh]')?.addEventListener('click', () => manageWarehouses(lid, rerender));
   root.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; rerender(); });

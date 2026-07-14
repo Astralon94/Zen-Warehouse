@@ -74,6 +74,22 @@ export function moveProduct(id, dir) {
   if (reorder(group, id, dir)) save();
 }
 
+// Editor massivo soglie di scorta: applica soglia minima e scorta target a più prodotti in UN colpo.
+// vals = { productId: { min, target } }; valori interi ≥ 0 (0 = non impostato). Applica solo ai prodotti
+// del locale indicato e salva UNA sola volta. Ritorna il numero di prodotti effettivamente cambiati.
+export function applyStockThresholds(localeId, vals) {
+  let n = 0;
+  Object.entries(vals || {}).forEach(([id, v]) => {
+    const p = data.products.find(x => x.id === id && x.localeId === localeId); if (!p) return;
+    const min = Math.max(0, parseInt(v?.min, 10) || 0);
+    const target = Math.max(0, parseInt(v?.target, 10) || 0);
+    if ((p.minStock || 0) === min && (p.targetStock || 0) === target) return; // nessuna variazione
+    p.minStock = min; p.targetStock = target; n++;
+  });
+  if (n) save();
+  return n;
+}
+
 // riordino via drag-drop: assegna .order = posizione nella sequenza data (per gruppo/lista)
 export function reorderProducts(ids) {
   ids.forEach((id, i) => { const p = data.products.find(x => x.id === id); if (p) p.order = i; });
