@@ -56,13 +56,16 @@ export function clearOrder(localeId) {
 // Proposta d'ordine automatica (Feature 2): per ogni prodotto in stato "sotto scorta" o "esaurito"
 // imposta nell'ordine in corso una quantità proposta = max((targetStock || minStock) − scorta, 1).
 // Gli esauriti senza soglie ottengono 1. Non sovrascrive quantità già inserite a mano (qty>0 → salta).
+// `prods` (opzionale) restringe la proposta a un sottoinsieme di prodotti — es. quelli visibili con i
+// filtri attivi nella schermata Ordine ("il riordino agisce su ciò che vedi"); assente = tutto il locale.
 // Ritorna il numero di prodotti aggiunti alla proposta.
-export function proposeRestock(localeId) {
+export function proposeRestock(localeId, prods) {
   const l = loc(localeId); if (!l) return 0;
   if (!l.currentOrder || typeof l.currentOrder !== 'object') l.currentOrder = {};
   const co = l.currentOrder;
+  const list = Array.isArray(prods) ? prods : productsOf(localeId);
   let n = 0;
-  productsOf(localeId).forEach(p => {
+  list.forEach(p => {
     const s = totalStock(p), m = p.minStock || 0, t = p.targetStock || 0;
     const isOut = s <= 0;
     const isLow = m > 0 && s <= m;

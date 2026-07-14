@@ -74,7 +74,8 @@ export function render() {
 
   h += filtersBar(lid);
   // Proposta d'ordine automatica (Feature 2): riempie l'ordine coi prodotti sotto scorta/esauriti.
-  if (canCompose()) h += `<div class="btnrow" style="margin-bottom:12px"><button class="btn" data-restock>⚡ Riordina sotto scorta</button></div>`;
+  // Con filtri attivi agisce solo sui prodotti visibili ("ciò che vedi"): lo dice anche l'etichetta.
+  if (canCompose()) h += `<div class="btnrow" style="margin-bottom:12px"><button class="btn" data-restock>⚡ Riordina sotto scorta${filtersActive() ? ' (filtrati)' : ''}</button></div>`;
   const filtered = applyFilters(lid, prods);
 
   // raggruppa nell'ordine di visualizzazione: categoria → diretti → sottocategorie → Altro
@@ -213,8 +214,17 @@ export function bind(root) {
 
   if (canCompose()) {
     root.querySelector('[data-restock]')?.addEventListener('click', () => {
-      const n = proposeRestock(lid);
-      toast(n ? `Aggiunti ${n} prodott${n === 1 ? 'o' : 'i'} alla proposta` : 'Nessun prodotto sotto scorta');
+      // il riordino agisce su "ciò che vedi": stessa lista visibile (stessi filtri della schermata).
+      const active = filtersActive();
+      const visible = applyFilters(lid, productsOf(lid));
+      const n = proposeRestock(lid, visible);
+      if (n) {
+        toast(`Aggiunti ${n} prodott${n === 1 ? 'o' : 'i'} alla proposta${active ? ' (filtri attivi)' : ''}`);
+      } else {
+        // distingui "nessuno sotto scorta nel locale" da "nessuno tra i filtrati"
+        const anyLow = productsOf(lid).some(p => stockStatus(p) !== 'ok');
+        toast(active && anyLow ? 'Nessun prodotto sotto scorta tra i filtrati' : 'Nessun prodotto sotto scorta');
+      }
       rerender();
     });
     root.querySelectorAll('[data-minus]').forEach(b => b.onclick = () => { addQty(lid, b.dataset.minus, -1); updateRow(b.dataset.minus); });
