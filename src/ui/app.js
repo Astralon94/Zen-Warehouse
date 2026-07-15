@@ -75,7 +75,7 @@ function saveBadgeInner() {
     conflict: { c: '#c2685f', dot: '⚠', t: 'Conflitto — risolvi' },
   };
   const m = conf[saveStatus()] || conf.saved;
-  return `<span style="color:${m.c}">${m.dot} ${m.t}</span>`;
+  return `<span style="color:${m.c}">${m.dot} <span class="sb-txt">${m.t}</span></span>`;
 }
 function refreshSaveBadge() {
   const el = document.getElementById('saveBadge');
@@ -127,7 +127,7 @@ function userMenu() {
   const nome = user?.nome || user?.username || 'Utente';
   const ruolo = user ? ((meta?.ruoli && meta.ruoli[user.ruolo]) || (user.ruolo === 'admin' ? 'Amministratore' : 'Operatore')) : '';
   return `<div class="navwrap usermenu" style="margin-left:8px">
-    <button class="navbtn" id="userToggle" title="Account"><span class="ic">👤</span><span>${esc(nome)}</span><span style="opacity:.6">▾</span></button>
+    <button class="navbtn" id="userToggle" title="Account"><span class="ic">👤</span><span class="u-name">${esc(nome)}</span><span style="opacity:.6">▾</span></button>
     <div class="navmenu" id="userMenu">
       <div class="muted" style="padding:6px 11px;font-size:12px">${esc(nome)}${ruolo ? ' · ' + esc(ruolo) : ''}</div>
       <button data-chpw><span class="ic">🔑</span>Cambia password</button>

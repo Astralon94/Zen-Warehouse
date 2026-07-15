@@ -302,14 +302,61 @@ table.matrix td.mcell:hover { box-shadow: inset 0 0 0 2px var(--accent); }
 #toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(20px); background: var(--txt); color: var(--bg); padding: 11px 18px; border-radius: 12px; font-weight: 600; box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: .2s; z-index: 80; max-width: 90vw; }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-@media (max-width: 640px) {
-  .sheet, .sheet.wide { top: auto; bottom: 0; transform: translate(-50%, 100%); width: 100vw; border-radius: 18px 18px 0 0; max-height: 92vh; }
-  .sheet.show { transform: translate(-50%, 0); }
-  .grid.k3, .grid.k4 { grid-template-columns: repeat(2, 1fr); }
-  .topbar .brand { display: none; }
+/* ===================== MOBILE — famiglia Zen: breakpoint condivisi 900 / 600 ===================== */
+/* Il layout desktop resta invariato SOPRA i breakpoint. Sotto, adattamenti progressivi. */
+
+/* ---- ≤900px: tablet e finestre strette ---- */
+@media (max-width: 900px) {
+  #view { padding: 18px 14px 96px; }
+  /* KPI: da 4/3 colonne a 2 per non schiacciarle (minmax(0,1fr) evita overflow da contenuto nowrap) */
+  .grid.k4, .grid.k3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-/* tablet/laptop stretti: le KPI a 4 colonne diventano 2 per non schiacciarsi */
-@media (min-width: 641px) and (max-width: 980px) { .grid.k4 { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---- ≤600px: telefono ---- */
+@media (max-width: 600px) {
+  #view { padding: 14px 12px 96px; }
+  .pagehead { margin: 2px 0 12px; gap: 8px; }
+  .pagehead h1 { font-size: 20px; }
+
+  /* Topbar compatta: via brand + testo badge + nome utente; solo icone e select ridotto.
+     Le FUNZIONI restano (menu ☰, spia salvataggio via pallino, account 👤). */
+  .topbar { padding: 10px 12px; gap: 8px; }
+  .topbar .brand { display: none; }
+  .sb-txt, .u-name { display: none; }
+  .savebadge { margin-left: 2px !important; }
+  .navwrap.usermenu { margin-left: 4px !important; }
+  .selbox { max-width: 40vw; }
+  .navbtn { max-width: 44vw; padding: 8px 10px; }
+  .navbtn > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+  /* Form: colonna singola + font ≥16px sui controlli per evitare l'auto-zoom iOS al focus.
+     (i number-input compatti di Ordine/Soglie/Inventario non fissano font-size inline: qui li ereditano) */
+  input, select, textarea { font-size: 16px; }
+  .frow { flex-direction: column; gap: 8px; }
+  .frow > * { flex: none; margin-bottom: 0; }
+
+  /* KPI: due colonne strette anche su telefono */
+  .grid.k2, .grid.k3, .grid.k4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi .val { font-size: 19px; }
+
+  /* Liste + target touch comodi (≥40px), niente dipendenza dall'hover */
+  .row { padding: 12px 13px; gap: 10px; }
+  .btn { min-height: 40px; }
+  .btn.sm { min-height: 38px; }
+  .btn-icon { min-width: 40px; min-height: 40px; }
+  .chip { padding: 8px 14px; }
+
+  /* Barra ordine fissa: il bottone "Genera PDF" può andare a capo invece di overfloware */
+  #orderbar [data-gen] { white-space: normal; line-height: 1.25; }
+
+  /* Sheet/overlay come bottom-sheet a tutta larghezza, con safe-area */
+  .sheet, .sheet.wide {
+    top: auto; bottom: 0; transform: translate(-50%, 100%);
+    width: 100vw; max-width: 100vw; border-radius: 18px 18px 0 0; max-height: 92vh;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0));
+  }
+  .sheet.show { transform: translate(-50%, 0); }
+}
 
 /* Selezione multipla righe (Database → Prodotti) */
 .row.selrow { cursor: pointer; }
