@@ -2,7 +2,7 @@
 import './styles.css';
 import { data, save, subscribe, onSaveStatus, saveStatus, reloadFromServer, forceSave } from '../state/store.js';
 import { logout, can, canSeeNav, changePassword, user, meta } from '../state/auth.js';
-import { openSheet, closeSheet, toast } from './dom.js';
+import { openSheet, closeSheet, toast, isDesktop } from './dom.js';
 import { esc } from '../domain/util.js';
 
 import * as ordine from './views/ordine.js';
@@ -201,9 +201,32 @@ export function renderApp() {
     root.innerHTML = `<div class="card empty" style="margin-top:40px">Nessuna sezione disponibile.<br><span class="muted">Contatta l'amministratore per farti assegnare i permessi.</span></div>`;
     return;
   }
+  // Segnala l'INGRESSO reale nella vista (navigazione), distinto dai re-render di stato/ricerca:
+  // la vista lo consuma via consumeViewEntry() per l'autofocus "una tantum" all'apertura.
+  pendingEntry = current !== renderedView;
+  renderedView = current;
   const v = VIEWS[current].mod;
   root.innerHTML = v.render();
   if (v.bind) v.bind(root);
+}
+
+// ---- Ingresso vista (per autofocus solo all'apertura, non a ogni re-render) ----
+let renderedView = null, pendingEntry = false;
+export function consumeViewEntry() { const e = pendingEntry; pendingEntry = false; return e; }
+
+// Scorciatoia da tastiera "/" (solo desktop): focalizza la casella di ricerca della vista corrente.
+// Non scatta mentre si digita in un campo, se una sheet è aperta, o su touch.
+if (typeof document !== 'undefined') {
+  document.addEventListener('keydown', e => {
+    if (e.key !== '/' || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!isDesktop()) return;
+    const a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName || '')) return;
+    if (a && a.isContentEditable) return;
+    if (document.querySelector('.sheet.show')) return;
+    const box = document.querySelector('#view input[placeholder^="Cerca"]');
+    if (box) { e.preventDefault(); box.focus(); try { box.select(); } catch {} }
+  });
 }
 
 let booted = false;

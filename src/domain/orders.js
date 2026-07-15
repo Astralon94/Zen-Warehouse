@@ -6,6 +6,19 @@ import { data, save } from '../state/store.js';
 import { uid } from './util.js';
 import { loc, product, supplierName, orderLines, currentOrderOf, productsOf, totalStock } from './warehouse.js';
 
+// ---- Memoria del punto di consegna (per locale) ----
+// Ricorda l'ultimo punto di consegna usato per un locale, così l'invio ordine lo può preselezionare
+// invece di richiederlo da zero ogni volta. Vive in data.settings (persistito col changeset granulare).
+export function lastDeliveryPoint(localeId) {
+  const m = data.settings?.lastDeliveryPoint;
+  return (m && typeof m === 'object' && !Array.isArray(m)) ? (m[localeId] || null) : null;
+}
+export function rememberDeliveryPoint(localeId, dpId) {
+  if (!data.settings.lastDeliveryPoint || typeof data.settings.lastDeliveryPoint !== 'object' || Array.isArray(data.settings.lastDeliveryPoint)) data.settings.lastDeliveryPoint = {};
+  data.settings.lastDeliveryPoint[localeId] = dpId || null;
+  save({ silent: true });   // preferenza d'uso: nessun re-render globale necessario
+}
+
 // ---- storico ----
 export function deleteOrder(id) {
   data.orders = data.orders.filter(o => o.id !== id); save();

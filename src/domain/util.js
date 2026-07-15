@@ -91,6 +91,28 @@ export function lineMatches(ln, term, codeLookup) {
   return !!code && code.includes(term);
 }
 
+// Bersaglio di uno "scan"/Invio nella ricerca: priorità ASSOLUTA al match ESATTO di codice
+// (case-insensitive sul normalizzato) nell'intero insieme `scope`, indipendentemente da quanti
+// risultati sono mostrati. In mancanza, se la lista già filtrata `visible` ha UN solo elemento,
+// quello. Altrimenti null (ambiguo → nessuna azione automatica). Abilita l'uso del barcode.
+export function scanTarget(term, scope, visible) {
+  const t = normCode(term);
+  if (!t) return null;
+  const exact = (scope || []).find(p => normCode(p.code) === t);
+  if (exact) return exact;
+  return (visible && visible.length === 1) ? visible[0] : null;
+}
+
+// Debounce con flush/cancel: rimanda `fn` di `ms`; `.flush()` la esegue subito (usato sull'Invio,
+// così l'azione agisce sullo stato più aggiornato), `.cancel()` la annulla.
+export function debounce(fn, ms = 130) {
+  let t = null, lastArgs = null;
+  const wrapped = (...args) => { lastArgs = args; clearTimeout(t); t = setTimeout(() => { t = null; fn(...lastArgs); }, ms); };
+  wrapped.flush = () => { if (t) { clearTimeout(t); t = null; fn(...(lastArgs || [])); } };
+  wrapped.cancel = () => { clearTimeout(t); t = null; };
+  return wrapped;
+}
+
 export const fullName = e => `${(e.firstName || '').trim()} ${(e.lastName || '').trim()}`.trim() || 'Senza nome';
 export function initials(e) {
   const f = (e.firstName || '').trim(), l = (e.lastName || '').trim();

@@ -1,6 +1,19 @@
 // ============ Helper UI: toast, sheet/modal, conferme, stampa, download ============
 import { esc } from '../domain/util.js';
 
+// Desktop = puntatore fine (mouse/trackpad). Su touch NON si autofocalizza (aprirebbe la tastiera
+// e sposterebbe il layout) né si usa la scorciatoia `/`.
+export const isDesktop = () => { try { return window.matchMedia('(pointer: fine)').matches; } catch { return false; } };
+// Autofocus "gentile": mette il focus su `el` solo su desktop, solo se non c'è già un controllo
+// focalizzato (non ruba il focus durante l'uso) e nessuna sheet è aperta. Da chiamare all'INGRESSO vista.
+export function gentleAutofocus(el) {
+  if (!el || !isDesktop()) return;
+  if (document.querySelector('.sheet.show')) return;
+  const a = document.activeElement;
+  if (a && a !== document.body && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(a.tagName || '')) return;
+  el.focus();
+}
+
 // Badge del CODICE prodotto: piccolo, monospace, muted — secondario rispetto al nome (bold) e al
 // badge formato (accento). Vuoto se il prodotto non ha codice (niente placeholder). Reso ovunque
 // compare il nome prodotto, tramite questa unica funzione per coerenza visiva.

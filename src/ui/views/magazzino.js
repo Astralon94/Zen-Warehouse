@@ -1,7 +1,8 @@
 // ============ Vista Magazzino/scorte (Zen-Warehouse) ============
 // Multi-magazzino: lo stesso prodotto ha scorte separate per magazzino fisico dentro il locale.
-import { esc, fmtEur, productMatches } from '../../domain/util.js';
-import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet, codeTag } from '../dom.js';
+import { esc, fmtEur, productMatches, scanTarget, debounce } from '../../domain/util.js';
+import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet, codeTag, gentleAutofocus } from '../dom.js';
+import { consumeViewEntry } from '../app.js';
 import {
   activeLocale, activeLocaleObj, productsOf, product, supplierName,
   warehousesOf, warehouse, warehouseName, stockOf, totalStock, warehouseValue,
@@ -188,7 +189,17 @@ function moveModal(lid, p, kind, whId, after) {
         if (isIn) stockIn(lid, p.id, whId, qty, note); else stockOut(lid, p.id, whId, qty, note);
         closeSheet(); toast(isIn ? `Caricati ${qty} ✓` : `Scaricati ${qty} ✓`); after && after();
       };
+      enterConfirms(sheet);
     });
+}
+
+// Invio in un input del foglio = click sul pulsante primario [data-ok]. Non tocca i confirm distruttivi
+// (usano confirmDialog, che non chiama questa funzione): quelli restano a click esplicito.
+function enterConfirms(sheet) {
+  const ok = sheet.querySelector('[data-ok]'); if (!ok) return;
+  sheet.querySelectorAll('input').forEach(inp => inp.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return; e.preventDefault(); ok.click();
+  }));
 }
 
 // modal trasferimento da magazzino a magazzino
@@ -225,6 +236,7 @@ function transferModal(lid, p, after) {
         toast(eff ? `Trasferiti ${eff} ✓` : 'Niente da trasferire (giacenza insufficiente)');
         after && after();
       };
+      enterConfirms(sheet);
     });
 }
 
@@ -290,6 +302,7 @@ function adjustModal(lid, p, whId, after) {
         setStock(lid, p.id, whId, s2.querySelector('#a_val').value, s2.querySelector('#a_note').value.trim());
         toast('Giacenza aggiornata ✓'); after && after();
       };
+      enterConfirms(s2);
     });
 }
 
@@ -648,9 +661,19 @@ function pfBar(lid, f, extra = '') {
 }
 // cabla ricerca + select condivisi. `rerender` DEVE raccogliere gli input di sezione prima di ridisegnare
 // (così i valori digitati su righe che escono dal filtro non vanno persi).
-function pfBind(root, f, rerender) {
+// `onEnter` (facoltativo): Invio nella ricerca. Se fornito, la ricerca viene prima allineata (rerender)
+// e poi si esegue onEnter() — usato dall'Inventario per il flusso barcode (scan → focus conteggio).
+function pfBind(root, f, rerender, onEnter) {
   const qi = root.querySelector('#pf_q');
-  if (qi) qi.oninput = () => { f.q = qi.value; const pos = qi.selectionStart; rerender(); const n = root.querySelector('#pf_q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+  if (qi) {
+    const commit = () => { const pos = qi.selectionStart; rerender(); const n = root.querySelector('#pf_q'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } };
+    const deb = debounce(commit, 130);
+    qi.oninput = () => { f.q = qi.value; deb(); };
+    qi.onkeydown = e => {
+      if (e.key !== 'Enter') return; e.preventDefault(); f.q = qi.value; deb.cancel();
+      if (onEnter) onEnter(); else commit();
+    };
+  }
   const catSel = root.querySelector('#pf_cat'); if (catSel) catSel.onchange = () => { f.cat = catSel.value; f.sub = 'all'; rerender(); };
   const subSel = root.querySelector('#pf_sub'); if (subSel) subSel.onchange = () => { f.sub = subSel.value; rerender(); };
   const supSel = root.querySelector('#pf_sup'); if (supSel) supSel.onchange = () => { f.sup = supSel.value; rerender(); };
@@ -742,14 +765,41 @@ function bindInventory(root) {
     else doSwitch();
   };
   const labelEl = root.querySelector('#inv_label'); if (labelEl) labelEl.oninput = () => { invLabel = labelEl.value; };
-  pfBind(root, invFilter, rerender);
+  // porta il focus (testo selezionato) sul conteggio di pid, se presente; altrimenti false
+  const focusIq = pid => { const inp = root.querySelector(`.iq[data-prod="${CSS.escape(pid)}"]`); if (inp) { inp.focus(); try { inp.select(); } catch {} return true; } return false; };
+  // Invio in ricerca = barcode: codice esatto (o risultato unico) → focus sul conteggio del prodotto.
+  const scan = () => {
+    rerender();
+    const scopeList = invBase(lid, invWh);
+    const target = scanTarget(invFilter.q, scopeList, pfApply(lid, invFilter, scopeList));
+    if (!target) { root.querySelector('#pf_q')?.focus(); return; }
+    if (!focusIq(target.id)) {
+      invFilter.cat = 'all'; invFilter.sub = 'all'; invFilter.sup = 'all'; invStatus = 'all';
+      rerender();
+      if (!focusIq(target.id)) root.querySelector('#pf_q')?.focus();
+    }
+  };
+  pfBind(root, invFilter, rerender, scan);
   const stSel = root.querySelector('#inv_status'); if (stSel) stSel.onchange = () => { invStatus = stSel.value; rerender(); };
   root.querySelector('[data-inv-reset]')?.addEventListener('click', () => { invFilter.q = ''; invFilter.cat = 'all'; invFilter.sub = 'all'; invFilter.sup = 'all'; invStatus = 'all'; rerender(); });
-  root.querySelectorAll('.iq').forEach(inp => inp.oninput = () => {
-    invCounts[inp.dataset.prod] = parseInt(inp.value, 10) || 0;
-    const btn = root.querySelector('[data-save]'); if (!btn) return;
-    const n = productsOf(lid).filter(p => { const c = invCounts[p.id]; return c != null && c !== stockOf(p, invWh); }).length;
-    btn.disabled = !n; btn.textContent = 'Conferma rettifica' + (n ? ` · ${n}` : '');
+  root.querySelectorAll('.iq').forEach(inp => {
+    inp.oninput = () => {
+      invCounts[inp.dataset.prod] = parseInt(inp.value, 10) || 0;
+      const btn = root.querySelector('[data-save]'); if (!btn) return;
+      const n = productsOf(lid).filter(p => { const c = invCounts[p.id]; return c != null && c !== stockOf(p, invWh); }).length;
+      btn.disabled = !n; btn.textContent = 'Conferma rettifica' + (n ? ` · ${n}` : '');
+    };
+    // Invio: passa al conteggio successivo (come le Soglie); se non c'è (es. lista ridotta a 1 dopo uno
+    // scan) azzera la ricerca e torna alla casella, pronta per il prossimo barcode.
+    inp.onkeydown = e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      invCounts[inp.dataset.prod] = parseInt(inp.value, 10) || 0;
+      const iqs = [...root.querySelectorAll('.iq')];
+      const i = iqs.indexOf(inp);
+      if (i >= 0 && i < iqs.length - 1) { iqs[i + 1].focus(); try { iqs[i + 1].select(); } catch {} }
+      else { invFilter.q = ''; rerender(); root.querySelector('#pf_q')?.focus(); }
+    };
   });
   root.querySelector('[data-print]').onclick = () => {
     const prods = invBase(lid, invWh).map(p => ({ name: p.name, format: p.format || '', stock: stockOf(p, invWh) }));
@@ -765,6 +815,7 @@ function bindInventory(root) {
     invCounts = {}; invLabel = invDefaultLabel(lid, invWh);
     root.innerHTML = render(); bind(root);
   };
+  if (consumeViewEntry()) gentleAutofocus(root.querySelector('#pf_q'));
 }
 
 // ---- Soglie di scorta: sezione dedicata a tutta pagina (soglia minima + scorta target) ----
@@ -1076,6 +1127,7 @@ export function bind(root) {
     invWh = (scope !== 'all' && whs.some(w => w.id === scope)) ? scope : whs[0].id;
     invLabel = invDefaultLabel(lid, invWh);
     rerender();
+    gentleAutofocus(root.querySelector('#pf_q'));   // desktop: ricerca pronta per lo scan
   });
   root.querySelector('[data-thresholds]')?.addEventListener('click', () => {
     mode = 'thresholds'; thrVals = {}; thrStatus = 'all'; thrSort = 'nat';
@@ -1086,8 +1138,22 @@ export function bind(root) {
   root.querySelector('[data-managewh]')?.addEventListener('click', () => manageWarehouses(lid, rerender));
   root.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; rerender(); });
   const qi = root.querySelector('#mq');
-  if (qi) qi.oninput = () => { q = qi.value; const pos = qi.selectionStart; rerender(); const n = root.querySelector('#mq'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+  if (qi) {
+    const commitSearch = () => { const pos = qi.selectionStart; rerender(); const n = root.querySelector('#mq'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } };
+    const deb = debounce(commitSearch, 130);
+    qi.oninput = () => { q = qi.value; deb(); };
+    // Invio = barcode: codice esatto (o risultato unico) → apre la scheda prodotto (giacenze/movimenti)
+    qi.onkeydown = e => {
+      if (e.key !== 'Enter') return; e.preventDefault(); q = qi.value; deb.cancel();
+      const allProds = productsOf(lid);
+      const term = q.trim().toLowerCase();
+      const vis = term ? allProds.filter(p => productMatches(p, term)) : allProds;
+      const target = scanTarget(q, allProds, vis);
+      if (target) openProduct(target.id, rerender); else rerender();
+    };
+  }
   root.querySelectorAll('[data-prod]').forEach(el => el.onclick = () => openProduct(el.dataset.prod, rerender));
   root.querySelectorAll('[data-in]').forEach(b => b.onclick = e => { e.stopPropagation(); const p = product(b.dataset.in); withWarehouse(lid, 'Carico · scegli magazzino', wh => moveModal(lid, p, 'in', wh, rerender), p); });
   root.querySelectorAll('[data-out]').forEach(b => b.onclick = e => { e.stopPropagation(); withWarehouse(lid, 'Scarico · scegli magazzino', wh => moveModal(lid, product(b.dataset.out), 'out', wh, rerender)); });
+  if (consumeViewEntry()) gentleAutofocus(root.querySelector('#mq'));
 }

@@ -1,14 +1,14 @@
 // ============ Vista Ordine: quantità per prodotto → PDF per fornitore + storico ============
-import { esc, productMatches } from '../../domain/util.js';
-import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet, codeTag } from '../dom.js';
+import { esc, productMatches, scanTarget, debounce } from '../../domain/util.js';
+import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet, codeTag, gentleAutofocus } from '../dom.js';
 import {
   activeLocale, activeLocaleObj, productsOf, suppliersOf, supplierName, orderQty,
   topTypes, subTypes, type, deliveryPointsOf, orderLines, totalStock,
 } from '../../domain/warehouse.js';
-import { addQty, setQty, clearOrder, orderTotals, sendOrder, proposeRestock, supplierNoteOf, setSupplierNote, clearSupplierNote } from '../../domain/orders.js';
+import { addQty, setQty, clearOrder, orderTotals, sendOrder, proposeRestock, supplierNoteOf, setSupplierNote, clearSupplierNote, lastDeliveryPoint, rememberDeliveryPoint } from '../../domain/orders.js';
 import { generateOrderPdfs } from '../../domain/orderpdf.js';
 import { can } from '../../state/auth.js';
-import { go } from '../app.js';
+import { go, consumeViewEntry } from '../app.js';
 
 const fmtBadge = f => f ? `<span class="badge soft" style="font-size:10px">${esc(f)}</span>` : '';
 
@@ -162,9 +162,34 @@ export function bind(root) {
 
   root.querySelector('[data-godb]')?.addEventListener('click', () => go('db'));
 
-  // Filtri (attivi anche in sola lettura): ricerca con focus preservato + select fornitore/categoria.
+  // Ricerca: debounce (fluida, e robusta con gli scanner che "digitano" veloce) + focus preservato.
   const qi = root.querySelector('#ord_q');
-  if (qi) qi.oninput = () => { FILT.q = qi.value; const pos = qi.selectionStart; rerender(); const n = root.querySelector('#ord_q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+  if (qi) {
+    const commitSearch = () => { const pos = qi.selectionStart; rerender(); const n = root.querySelector('#ord_q'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } };
+    const deb = debounce(commitSearch, 130);
+    qi.oninput = () => { FILT.q = qi.value; deb(); };
+    // Invio nella ricerca = "spara barcode": match esatto di codice (o risultato unico) → focus quantità.
+    qi.onkeydown = e => { if (e.key !== 'Enter') return; e.preventDefault(); FILT.q = qi.value; deb.cancel(); handleScan(); };
+  }
+  // porta il focus (con testo selezionato) sull'input quantità del prodotto pid, se presente in lista
+  const focusQty = pid => {
+    const inp = root.querySelector(`.qtyinp[data-qty="${CSS.escape(pid)}"]`);
+    if (inp) { inp.focus(); try { inp.select(); } catch {} return true; }
+    return false;
+  };
+  // flusso barcode: dallo scan/Invio in ricerca → prodotto bersaglio → focus sulla sua quantità
+  const handleScan = () => {
+    rerender();                                   // allinea il DOM alla ricerca corrente
+    const scope = productsOf(lid);
+    const target = scanTarget(FILT.q, scope, applyFilters(lid, scope));
+    if (!target || !canCompose()) { root.querySelector('#ord_q')?.focus(); return; }
+    if (!focusQty(target.id)) {
+      // bersaglio (codice esatto) nascosto da altri filtri: sganciali mantenendo la ricerca e riprova
+      FILT.supplierId = ''; FILT.categoryId = ''; FILT.lowOnly = false;
+      rerender();
+      if (!focusQty(target.id)) root.querySelector('#ord_q')?.focus();
+    }
+  };
   root.querySelector('#ord_sup')?.addEventListener('change', e => { FILT.supplierId = e.target.value; rerender(); });
   root.querySelector('#ord_cat')?.addEventListener('change', e => { FILT.categoryId = e.target.value; rerender(); });
   root.querySelector('[data-flow]')?.addEventListener('click', () => { FILT.lowOnly = !FILT.lowOnly; rerender(); });
@@ -229,12 +254,26 @@ export function bind(root) {
     });
     root.querySelectorAll('[data-minus]').forEach(b => b.onclick = () => { addQty(lid, b.dataset.minus, -1); updateRow(b.dataset.minus); });
     root.querySelectorAll('[data-plus]').forEach(b => b.onclick = () => { addQty(lid, b.dataset.plus, +1); updateRow(b.dataset.plus); });
-    root.querySelectorAll('[data-qty]').forEach(inp => inp.onchange = () => { setQty(lid, inp.dataset.qty, inp.value); updateRow(inp.dataset.qty); });
+    root.querySelectorAll('[data-qty]').forEach(inp => {
+      inp.onchange = () => { setQty(lid, inp.dataset.qty, inp.value); updateRow(inp.dataset.qty); };
+      // Invio dopo la quantità: conferma e torna alla ricerca AZZERATA, pronta per lo scan successivo.
+      inp.onkeydown = e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        setQty(lid, inp.dataset.qty, inp.value);
+        FILT.q = '';
+        rerender();
+        root.querySelector('#ord_q')?.focus();
+      };
+    });
     bindClear();
     bindNotes();
   }
 
   if (canSend()) root.querySelector('[data-gen]')?.addEventListener('click', () => startGenerate(lid, rerender));
+
+  // Autofocus della ricerca all'INGRESSO vista (solo desktop; su touch resterebbe la tastiera aperta).
+  if (consumeViewEntry()) gentleAutofocus(root.querySelector('#ord_q'));
 }
 
 // Editor della nota "permanente" di un fornitore (chiave '__none__' = senza fornitore).
@@ -267,19 +306,27 @@ function openNoteSheet(lid, key, refresh) {
 }
 
 // Scelta punto di consegna (se presenti), poi genera.
+//  - nessun punto → genera senza chiedere;
+//  - UN solo punto → usa quello senza chiedere (lo ricorda);
+//  - più punti → chiede, con l'ULTIMO usato preselezionato in cima (badge "ultimo").
 function startGenerate(lid, rerender) {
   const dps = deliveryPointsOf(lid);
   if (!dps.length) return generate(lid, null, rerender);
+  if (dps.length === 1) { rememberDeliveryPoint(lid, dps[0].id); return generate(lid, dps[0].id, rerender); }
+  const lastId = lastDeliveryPoint(lid);
+  const pick = dpId => { rememberDeliveryPoint(lid, dpId); closeSheet(); generate(lid, dpId, rerender); };
+  // ordina con l'ultimo usato in cima
+  const ordered = lastId ? [...dps].sort((a, b) => (a.id === lastId ? -1 : 0) - (b.id === lastId ? -1 : 0)) : dps;
   openSheet(`
     <h2>📍 Punto di consegna</h2>
     <div class="sheetsub">Dove va consegnato questo ordine? Comparirà su tutti i PDF inviati ai fornitori.</div>
-    <div class="list">${dps.map(d => `<div class="row click" data-dp="${d.id}"><div class="emoji">📍</div>
-      <div class="mid"><div class="t1">${esc(d.name)}</div>${d.address ? `<div class="t2">${esc(d.address)}</div>` : ''}</div></div>`).join('')}</div>
+    <div class="list">${ordered.map(d => `<div class="row click" data-dp="${d.id}"${d.id === lastId ? ' style="background:var(--accent-soft)"' : ''}><div class="emoji">📍</div>
+      <div class="mid"><div class="t1">${esc(d.name)}${d.id === lastId ? ' <span class="badge soft" style="font-size:10px">ultimo</span>' : ''}</div>${d.address ? `<div class="t2">${esc(d.address)}</div>` : ''}</div></div>`).join('')}</div>
     <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn" data-none>Senza punto</button></div>`,
     sheet => {
       sheet.querySelector('[data-cancel]').onclick = closeSheet;
-      sheet.querySelector('[data-none]').onclick = () => { closeSheet(); generate(lid, null, rerender); };
-      sheet.querySelectorAll('[data-dp]').forEach(el => el.onclick = () => { closeSheet(); generate(lid, el.dataset.dp, rerender); });
+      sheet.querySelector('[data-none]').onclick = () => { rememberDeliveryPoint(lid, null); closeSheet(); generate(lid, null, rerender); };
+      sheet.querySelectorAll('[data-dp]').forEach(el => el.onclick = () => pick(el.dataset.dp));
     });
 }
 
