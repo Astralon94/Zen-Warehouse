@@ -190,6 +190,68 @@ export function renameScheda(localeId, batchId, label) {
   return touched;
 }
 
+// ---- Eliminazione di una scheda (storno) ----
+// Storna l'effetto di una scheda sulle giacenze e ne rimuove i movimenti dallo storico.
+// Principio: si INVERTE l'effetto di ogni movimento del batch (carico→togli, prelievo→rimetti,
+// trasferimento→riporta indietro, rettifica→annulla il delta) invertendo semplicemente il `kind`.
+// Nessun ricalcolo globale né confronto di stato: si toccano SOLO i record del batch. `setWh` clampa
+// a 0, quindi uno storno che porterebbe una giacenza sotto zero (merce già movimentata DOPO la scheda)
+// la ferma a 0 — il preview lo segnala in anticipo così l'utente decide.
+
+// movimenti del batch nel locale
+const batchMovesOf = (localeId, batchId) => data.stockMoves.filter(m => m.localeId === localeId && m.batchId === batchId);
+
+// aggiustamenti di storno aggregati per (prodotto, magazzino): delta da SOMMARE alla giacenza attuale.
+// Aggregare prima di clampare evita errori quando più movimenti toccano lo stesso prodotto/magazzino.
+function stornoAdjustments(moves) {
+  const agg = new Map();   // `${pid}|${whId}` -> { p, whId, delta }
+  const add = (p, whId, delta) => {
+    if (!p || !whId || !delta) return;
+    const k = p.id + '|' + whId;
+    const e = agg.get(k) || { p, whId, delta: 0 };
+    e.delta += delta; agg.set(k, e);
+  };
+  moves.forEach(m => {
+    const p = product(m.productId); if (!p) return;
+    const qty = Math.floor(+m.qty) || 0; if (qty <= 0) return;
+    if (m.kind === 'transfer') { add(p, m.fromWarehouseId, +qty); add(p, m.warehouseId, -qty); } // riporta indietro
+    else if (m.kind === 'in') add(p, m.warehouseId, -qty);   // era un carico/+: storna togliendo
+    else add(p, m.warehouseId, +qty);                        // 'out' era un prelievo/−: storna rimettendo
+  });
+  return [...agg.values()];
+}
+
+// Anteprima dell'eliminazione: quante coppie prodotto-magazzino finirebbero sotto zero (verranno
+// clampate a 0) e quanti movimenti sono coinvolti. Null se la scheda non esiste. NON muta nulla.
+export function schedaDeletionPreview(localeId, batchId) {
+  const moves = batchMovesOf(localeId, batchId);
+  if (!moves.length) return null;
+  let negatives = 0;
+  stornoAdjustments(moves).forEach(e => {
+    const now = (e.p.stockByWh && e.p.stockByWh[e.whId]) || 0;
+    if (now + e.delta < 0) negatives++;
+  });
+  return { negatives, moveCount: moves.length };
+}
+
+// Elimina una scheda: applica lo storno alle giacenze e rimuove i movimenti del batch. Una sola save
+// (changeset granulare: upsert dei prodotti toccati + remove dei movimenti del batch). La scheda, essendo
+// derivata dai movimenti, sparisce dallo storico. Ritorna { removed, negatives } o null se inesistente.
+export function deleteScheda(localeId, batchId) {
+  const moves = batchMovesOf(localeId, batchId);
+  if (!moves.length) return null;
+  let negatives = 0;
+  stornoAdjustments(moves).forEach(e => {
+    const now = (e.p.stockByWh && e.p.stockByWh[e.whId]) || 0;
+    if (now + e.delta < 0) negatives++;
+    setWh(e.p, e.whId, now + e.delta);   // setWh clampa a 0
+  });
+  const before = data.stockMoves.length;
+  data.stockMoves = data.stockMoves.filter(m => !(m.localeId === localeId && m.batchId === batchId));
+  save();
+  return { removed: before - data.stockMoves.length, negatives };
+}
+
 // chiave di raggruppamento per fornitore di una riga d'ordine ('__none__' se senza fornitore)
 const supKey = ln => ln.supplierId || '__none__';
 // insieme dei gruppi-fornitore presenti in un ordine

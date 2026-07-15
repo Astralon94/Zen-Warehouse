@@ -12,6 +12,7 @@ import {
   addWarehouse, renameWarehouse, deleteWarehouse, reorderWarehouses, setWarehouseTypes,
   pendingReceipts, receiveOrderSupplier, dismissReceiptSupplier,
   applyMovementBatch, applyInventoryBatch, schede, schedaById, renameScheda,
+  deleteScheda, schedaDeletionPreview,
 } from '../../domain/stock.js';
 import { generateMovementSlip, generateInventorySheet } from '../../domain/orderpdf.js';
 import { applyStockThresholds } from '../../domain/catalog.js';
@@ -33,6 +34,9 @@ const cWhManage = () => cWhCrea() || cWhMod() || cWhDel();   // apre la gestione
 const cMove = () => cIn() || cOut();                          // pulsanti carico/scarico in riga
 // rinomina scheda = scrittura sui movimenti: basta uno qualsiasi dei permessi di scrittura magazzino
 const cRename = () => cIn() || cOut() || cAdj() || cTransfer() || cBatch();
+// eliminare una scheda (storno) = poter creare schede: le schede nascono da Movimento massivo
+// (magazzino.massivo) o da Inventario/rettifica (magazzino.rettifica).
+const cDelScheda = () => cBatch() || cAdj();
 
 let q = '';
 let filter = 'all';    // all | low | out
@@ -860,8 +864,8 @@ function bindThresholds(root) {
 function fmtSchedaDate(s) {
   return s.ts ? new Date(s.ts).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' }) : (s.date || '');
 }
-// riga-scheda per la lista (riusata dalla visuale dedicata)
-function schedaRow(lid, s) {
+// riga-scheda per la lista (riusata dalla visuale dedicata). `canDel` mostra l'azione Elimina in riga.
+function schedaRow(lid, s, canDel) {
   const pezzi = s.lines.reduce((a, ln) => a + (ln.qty || 0), 0);
   const route = s.type === 'transfer'
     ? `${esc(warehouseName(lid, s.fromWh))} → ${esc(warehouseName(lid, s.toWh))}`
@@ -877,6 +881,7 @@ function schedaRow(lid, s) {
     <div class="emoji">${emoji}</div>
     <div class="mid"><div class="t1">${typeLabel}${name} <span class="muted" style="font-weight:500;font-size:12px">· ${esc(fmtSchedaDate(s))}</span></div>
       <div class="t2">${route} · ${s.lines.length} rig${s.lines.length === 1 ? 'a' : 'he'} · ${pezzi} pz</div></div>
+    ${canDel ? `<button class="btn-icon" data-schedadel="${esc(s.batchId)}" title="Elimina scheda" aria-label="Elimina scheda" style="color:var(--red);flex-shrink:0">🗑</button>` : ''}
   </div>`;
 }
 
@@ -920,7 +925,8 @@ function renderSchede(lid, l) {
   if (!list.length) return h + `<div class="card empty">Nessuna scheda con questi filtri.</div>`;
 
   const visible = list.slice(0, schedeShown);
-  h += `<div class="list">${visible.map(s => schedaRow(lid, s)).join('')}</div>`;
+  const canDel = cDelScheda();
+  h += `<div class="list">${visible.map(s => schedaRow(lid, s, canDel)).join('')}</div>`;
   if (list.length > visible.length) {
     h += `<div class="btnrow" style="justify-content:center;margin-top:10px"><button class="btn" data-more>Mostra altri (restano ${list.length - visible.length})</button></div>`;
   }
@@ -940,6 +946,12 @@ function bindSchede(root) {
   if (qi) qi.oninput = () => { sq = qi.value; reset(); const pos = qi.selectionStart; rerender(); const n = root.querySelector('#s_q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
   root.querySelector('[data-reset]')?.addEventListener('click', () => { sq = ''; sTipo = 'all'; sWh = 'all'; sPeriod = 'all'; reset(); rerender(); });
   root.querySelector('[data-more]')?.addEventListener('click', () => { schedeShown += SCHEDE_STEP; rerender(); });
+  // elimina dalla riga (storno): stopPropagation per non aprire il dettaglio della stessa riga
+  root.querySelectorAll('[data-schedadel]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const s = schedaById(lid, b.dataset.schedadel);
+    if (s) confirmDeleteScheda(lid, s, rerender);
+  });
   // il dettaglio è uno sheet sopra la visuale: chiudendolo si torna qui (nessun back esplicito)
   root.querySelectorAll('[data-scheda]').forEach(el => el.onclick = () => schedaDetail(lid, el.dataset.scheda, null, rerender));
 }
@@ -969,14 +981,61 @@ function schedaDetail(lid, batchId, back, onChange) {
     ${s.note ? `<div class="section-title">Nota</div><div class="card" style="padding:12px">${esc(s.note)}</div>` : ''}
     <div class="actions"><button class="btn" data-back>Indietro</button>
       ${cRename() ? '<button class="btn" data-rename>✏️ Rinomina</button>' : ''}
+      ${cDelScheda() ? '<button class="btn danger" data-del>🗑 Elimina</button>' : ''}
       <button class="btn primary" data-print>⤓ Ristampa scheda</button></div>`,
     sheet => {
       sheet.querySelector('[data-back]').onclick = () => { closeSheet(); back && back(); };
       sheet.querySelector('[data-rename]')?.addEventListener('click', () => renameSchedaModal(lid, s, back, onChange));
+      // Elimina (storno): il confirm sostituisce questo sheet; annullando si torna al dettaglio.
+      sheet.querySelector('[data-del]')?.addEventListener('click', () =>
+        confirmDeleteScheda(lid, s, () => { onChange && onChange(); back && back(); }, () => schedaDetail(lid, s.batchId, back, onChange)));
       sheet.querySelector('[data-print]').onclick = () => {
         const l = activeLocaleObj();
         const pdf = generateMovementSlip(l, s, warehousesOf(lid));
         showPdfDownloadSheet([pdf]);
+      };
+    });
+}
+
+// Conferma distruttiva dell'eliminazione di una scheda, con riepilogo (tipo, data, magazzini, righe/pezzi,
+// effetto sulle giacenze) e avviso se lo storno porterebbe qualche giacenza in negativo (clampata a 0).
+// `after` gira dopo l'eliminazione; `onCancel` all'annulla (default: chiudi).
+function confirmDeleteScheda(lid, s, after, onCancel = closeSheet) {
+  const prev = schedaDeletionPreview(lid, s.batchId);
+  const pezzi = s.lines.reduce((a, ln) => a + (ln.qty || 0), 0);
+  const isTransfer = s.type === 'transfer', isCarico = s.type === 'carico', isRettifica = s.type === 'rettifica';
+  const typeLabel = isTransfer ? 'Trasferimento' : isCarico ? 'Carico' : isRettifica ? 'Rettifica' : 'Prelievo';
+  const route = isTransfer ? `${esc(warehouseName(lid, s.fromWh))} → ${esc(warehouseName(lid, s.toWh))}`
+    : isCarico ? `esterno → ${esc(warehouseName(lid, s.toWh))}`
+    : isRettifica ? esc(warehouseName(lid, s.toWh))
+    : `${esc(warehouseName(lid, s.fromWh))} → fuori magazzino`;
+  const effetto = isCarico ? 'le quantità caricate verranno tolte dalle giacenze'
+    : isRettifica ? 'la rettifica verrà annullata (giacenze riportate al valore precedente il conteggio)'
+    : isTransfer ? 'il trasferimento verrà riportato indietro tra i due magazzini'
+    : 'le quantità prelevate verranno rimesse in giacenza';
+  const neg = prev ? prev.negatives : 0;
+  const negWarn = neg > 0 ? `<div class="card" style="padding:11px 13px;margin-top:10px;border-color:color-mix(in srgb,var(--red) 35%,var(--line));background:color-mix(in srgb,var(--red) 8%,var(--card))">
+      <b style="color:var(--red)">⚠️ ${neg} prodott${neg === 1 ? 'o andrebbe' : 'i andrebbero'} in negativo</b>
+      <div class="muted" style="font-size:12.5px;margin-top:3px">Quella merce è stata movimentata dopo questa scheda: la giacenza verrà fermata a 0 anziché scendere sotto zero. Potrai sistemarla con una rettifica.</div>
+    </div>` : '';
+  openSheet(`
+    <h2>Eliminare la scheda?</h2>
+    <div class="sheetsub">Storna le giacenze e rimuove la scheda dallo storico. L'operazione non è reversibile.</div>
+    <div class="card" style="padding:12px 14px">
+      <div><b>${typeLabel}</b>${(s.label || '').trim() ? ' · ' + esc(s.label.trim()) : ''}</div>
+      <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(fmtSchedaDate(s))} · ${route} · ${s.lines.length} rig${s.lines.length === 1 ? 'a' : 'he'} · ${pezzi} pz</div>
+      <div class="muted" style="font-size:12.5px;margin-top:6px">Effetto: ${effetto}.</div>
+    </div>
+    ${negWarn}
+    <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn danger" data-ok>🗑 Elimina scheda</button></div>`,
+    sheet => {
+      sheet.querySelector('[data-cancel]').onclick = () => onCancel();
+      sheet.querySelector('[data-ok]').onclick = () => {
+        const r = deleteScheda(lid, s.batchId);
+        closeSheet();
+        if (!r) toast('Scheda non trovata');
+        else toast(`Scheda eliminata ✓${r.negatives ? ` · ${r.negatives} giacenz${r.negatives === 1 ? 'a portata' : 'e portate'} a 0` : ''}`);
+        after && after();
       };
     });
 }
