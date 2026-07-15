@@ -473,18 +473,23 @@ function batchSheet(lid, after) {
   let carWh = anchor;                                     // destinazione del carico (indipendente dall'origine)
   let bq = '';                                            // ricerca prodotti
   const qty = {};                                         // productId -> quantità inserita
+  let searchDeb = null;                                   // debounce della ricerca (ricreato a ogni wire)
+
+  // Prodotti MOVIMENTABILI nel contesto corrente (tipo operazione + magazzini), SENZA il termine di ricerca:
+  //  - carico: ammessi dalla destinazione (carWh) o con giacenza lì;
+  //  - trasferimento: con giacenza in origine E ammessi/già presenti a destinazione;
+  //  - prelievo: solo con giacenza in origine (merce in uscita: nessun vincolo di categoria).
+  // È lo "scope" del match barcode: un prodotto non movimentabile qui non è un bersaglio valido.
+  const movableBase = () => {
+    if (type === 'carico') return productsOf(lid).filter(p => warehouseAllowsProduct(lid, carWh, p) || stockOf(p, carWh) > 0);
+    if (type === 'transfer') return productsOf(lid).filter(p => stockOf(p, fromWh) > 0 && (warehouseAllowsProduct(lid, toWh, p) || stockOf(p, toWh) > 0));
+    return productsOf(lid).filter(p => stockOf(p, fromWh) > 0);
+  };
 
   const render = () => {
     const isTransfer = type === 'transfer';
     const isCarico = type === 'carico';
-    // Prodotti mostrati, filtrati dalle CATEGORIE del magazzino di destinazione (guida morbida):
-    //  - carico: prodotti ammessi dalla destinazione (carWh) o che vi hanno già giacenza;
-    //  - trasferimento: prodotti con giacenza in origine E ammessi dalla destinazione (o già presenti a dest.);
-    //  - prelievo: solo prodotti con giacenza in origine (merce in uscita: nessun vincolo di categoria).
-    let list;
-    if (isCarico) list = productsOf(lid).filter(p => warehouseAllowsProduct(lid, carWh, p) || stockOf(p, carWh) > 0);
-    else if (isTransfer) list = productsOf(lid).filter(p => stockOf(p, fromWh) > 0 && (warehouseAllowsProduct(lid, toWh, p) || stockOf(p, toWh) > 0));
-    else list = productsOf(lid).filter(p => stockOf(p, fromWh) > 0);
+    let list = movableBase();
     const term = bq.trim().toLowerCase();
     if (term) list = list.filter(p => productMatches(p, term));
 
@@ -549,7 +554,21 @@ function batchSheet(lid, after) {
     if (noteEl) noteEl.value = noteVal;
     if (labelEl) labelEl.value = labelVal;
     // ridisegna la modale in-place preservando nome, nota e quantità già inserite
-    const redraw = restore => { collect(sheet); if (noteEl) noteVal = noteEl.value; if (labelEl) labelVal = labelEl.value; openSheet(render(), s => { wire(s); restore && restore(s); }, { wide: true }); };
+    const redraw = restore => { searchDeb?.cancel(); collect(sheet); if (noteEl) noteVal = noteEl.value; if (labelEl) labelVal = labelEl.value; openSheet(render(), s => { wire(s); restore && restore(s); }, { wide: true }); };
+
+    // Flusso barcode: dallo scan/Invio in ricerca → prodotto bersaglio movimentabile → focus sulla sua
+    // quantità (.bq) con testo selezionato. Il "filtro" del massivo (tipo op + magazzino) è semantico:
+    // se il codice esiste ma non è movimentabile qui, non lo si può forzare → si avvisa e si resta in ricerca.
+    const scanBatch = () => {
+      const base = movableBase();
+      const term = bq.trim().toLowerCase();
+      const visible = term ? base.filter(p => productMatches(p, term)) : base;
+      const target = scanTarget(bq, base, visible);
+      if (target) { redraw(s => { const inp = s.querySelector(`.bq[data-prod="${CSS.escape(target.id)}"]`); if (inp) { inp.focus(); try { inp.select(); } catch {} } else s.querySelector('#b_q')?.focus(); }); return; }
+      // codice esatto presente nel locale ma fuori dal contesto movimentabile → messaggio chiaro
+      if (scanTarget(bq, productsOf(lid), [])) toast('Prodotto non disponibile per questa operazione');
+      redraw(s => s.querySelector('#b_q')?.focus());
+    };
 
     sheet.querySelectorAll('[data-btype]').forEach(b => b.onclick = () => {
       if (b.disabled) return;
@@ -568,10 +587,13 @@ function batchSheet(lid, after) {
       redraw();
     });
     const qi = sheet.querySelector('#b_q');
-    if (qi) qi.oninput = () => {
-      bq = qi.value; const pos = qi.selectionStart;
-      redraw(s => { const nq = s.querySelector('#b_q'); if (nq) { nq.focus(); nq.setSelectionRange(pos, pos); } });
-    };
+    if (qi) {
+      const commit = () => { const pos = qi.selectionStart; redraw(s => { const nq = s.querySelector('#b_q'); if (nq) { nq.focus(); try { nq.setSelectionRange(pos, pos); } catch {} } }); };
+      searchDeb = debounce(commit, 130);
+      qi.oninput = () => { bq = qi.value; searchDeb(); };
+      // Invio = barcode: aggancia il prodotto (codice esatto o risultato unico) e va sulla quantità
+      qi.onkeydown = e => { if (e.key !== 'Enter') return; e.preventDefault(); bq = qi.value; searchDeb.cancel(); scanBatch(); };
+    }
     if (noteEl) noteEl.oninput = () => { noteVal = noteEl.value; };
     if (labelEl) labelEl.oninput = () => { labelVal = labelEl.value; };
     // aggiorna il contatore "N prodotti · M pz" dagli input correnti (senza ridisegnare la modale)
@@ -594,7 +616,20 @@ function batchSheet(lid, after) {
     };
     sheet.querySelectorAll('[data-bminus]').forEach(b => b.onclick = () => step(b.dataset.bminus, -1));
     sheet.querySelectorAll('[data-bplus]').forEach(b => b.onclick = () => step(b.dataset.bplus, +1));
-    sheet.querySelectorAll('.bq').forEach(inp => inp.oninput = refreshSummary);
+    sheet.querySelectorAll('.bq').forEach(inp => {
+      inp.oninput = refreshSummary;
+      // Invio: passa alla quantità successiva; a fine lista (o dopo uno scan che filtra a 1 riga)
+      // azzera la ricerca e torna alla casella, pronta per il barcode successivo.
+      inp.onkeydown = e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        collect(sheet);   // preserva il valore appena digitato in `qty`
+        const bqs = [...sheet.querySelectorAll('.bq')];
+        const i = bqs.indexOf(inp);
+        if (i >= 0 && i < bqs.length - 1) { bqs[i + 1].focus(); try { bqs[i + 1].select(); } catch {} }
+        else { bq = ''; redraw(s => s.querySelector('#b_q')?.focus()); }
+      };
+    });
     sheet.querySelector('[data-cancel]').onclick = closeSheet;
     sheet.querySelector('[data-ok]').onclick = () => {
       collect(sheet);
