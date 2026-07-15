@@ -1,7 +1,7 @@
 // ============ Vista Magazzino/scorte (Zen-Warehouse) ============
 // Multi-magazzino: lo stesso prodotto ha scorte separate per magazzino fisico dentro il locale.
-import { esc, fmtEur } from '../../domain/util.js';
-import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet } from '../dom.js';
+import { esc, fmtEur, productMatches } from '../../domain/util.js';
+import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet, codeTag } from '../dom.js';
 import {
   activeLocale, activeLocaleObj, productsOf, product, supplierName,
   warehousesOf, warehouse, warehouseName, stockOf, totalStock, warehouseValue,
@@ -134,14 +134,14 @@ export function render() {
 
   let list = base;
   const term = q.trim().toLowerCase();
-  if (term) list = list.filter(p => p.name.toLowerCase().includes(term));
+  if (term) list = list.filter(p => productMatches(p, term));
   if (filter === 'low') list = list.filter(p => status(p) === 'low');
   else if (filter === 'out') list = list.filter(p => status(p) === 'out');
 
   if (!list.length) return h + `<div class="card empty">Nessun prodotto con questo filtro.</div>`;
 
   h += `<div class="list two">${list.map(p => `<div class="row click" data-prod="${p.id}">
-    <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
+    <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}${codeTag(p.code)}</div>
       <div class="t2">${esc(supplierName(p.supplierId))}${outOfCat(p) ? ' · <span class="badge line" style="font-size:9px">fuori categoria</span>' : ''}${scope !== 'all' && whs.length > 1 ? ` · <span class="muted">tot ${totalStock(p)}</span>` : ''}</div></div>
     ${badge(p)}
     ${cMove() ? `<div style="display:flex;gap:3px;flex-shrink:0;margin-left:8px">
@@ -174,7 +174,7 @@ function withWarehouse(lid, title, fn, prod) {
 function moveModal(lid, p, kind, whId, after) {
   const isIn = kind === 'in';
   openSheet(`
-    <h2>${isIn ? '➕ Carico' : '➖ Scarico'} · ${esc(p.name)}</h2>
+    <h2>${isIn ? '➕ Carico' : '➖ Scarico'} · ${esc(p.name)}${codeTag(p.code)}</h2>
     <div class="sheetsub">${esc(warehouseName(lid, whId))} · giacenza attuale: <b>${stockOf(p, whId)}</b></div>
     <div class="field"><label>Quantità</label><input id="m_qty" inputmode="numeric" placeholder="0" autofocus></div>
     <div class="field"><label>Nota (opzionale)</label><input id="m_note" placeholder="${isIn ? 'Es. consegna fornitore' : 'Es. reso, rottura, uso'}"></div>
@@ -203,7 +203,7 @@ function transferModal(lid, p, after) {
   const fromOpts = whs.map(w => `<option value="${w.id}" ${w.id === from0 ? 'selected' : ''}>${esc(w.name)} (${stockOf(p, w.id)})</option>`).join('');
   const toOpts = dests.map(w => `<option value="${w.id}" ${w.id === to0 ? 'selected' : ''}>${esc(w.name)} (${stockOf(p, w.id)})</option>`).join('');
   openSheet(`
-    <h2>↔ Trasferisci · ${esc(p.name)}</h2>
+    <h2>↔ Trasferisci · ${esc(p.name)}${codeTag(p.code)}</h2>
     <div class="frow">
       <div class="field"><label>Da</label><select id="t_from">${fromOpts}</select></div>
       <div class="field"><label>A</label><select id="t_to">${toOpts}</select></div>
@@ -256,7 +256,7 @@ function openProduct(id, after) {
   const movesHtml = moves.length ? `<div class="list">${moves.map(moveLine).join('')}</div>` : `<div class="card empty" style="padding:14px">Nessun movimento.</div>`;
 
   openSheet(`
-    <h2>${esc(p.name)}</h2>
+    <h2>${esc(p.name)}${codeTag(p.code)}</h2>
     <div class="sheetsub">Giacenza totale <b>${totalStock(p)}</b>${(p.minStock || 0) > 0 ? ` · soglia minima ${p.minStock}` : ''} · ${esc(supplierName(p.supplierId))}</div>
     ${(cIn() || cOut() || cAdj() || (cTransfer() && whs.length > 1)) ? `<div class="btnrow" style="margin:6px 0 14px">
       ${cIn() ? '<button class="btn primary" data-in>➕ Carico</button>' : ''}
@@ -279,7 +279,7 @@ function openProduct(id, after) {
 
 // modal rettifica su un magazzino specifico
 function adjustModal(lid, p, whId, after) {
-  openSheet(`<h2>Rettifica giacenza · ${esc(p.name)}</h2>
+  openSheet(`<h2>Rettifica giacenza · ${esc(p.name)}${codeTag(p.code)}</h2>
     <div class="sheetsub">${esc(warehouseName(lid, whId))}</div>
     <div class="field"><label>Giacenza reale</label><input id="a_val" inputmode="numeric" value="${stockOf(p, whId)}"></div>
     <div class="field"><label>Nota</label><input id="a_note" value="Rettifica"></div>
@@ -391,7 +391,7 @@ function receiptsSheet(lid, after) {
     : slices.map((sl, i) => {
         const pezzi = sl.lines.reduce((a, ln) => a + ln.qty, 0);
         const rows = sl.lines.map(ln => `<div class="row">
-          <div class="mid"><div class="t1">${esc(ln.name)}${ln.format ? ` <span class="badge soft" style="font-size:10px">${esc(ln.format)}</span>` : ''}</div>${ln.notes ? `<div class="t2">${esc(ln.notes)}</div>` : ''}</div>
+          <div class="mid"><div class="t1">${esc(ln.name)}${ln.format ? ` <span class="badge soft" style="font-size:10px">${esc(ln.format)}</span>` : ''}${codeTag(ln.code)}</div>${ln.notes ? `<div class="t2">${esc(ln.notes)}</div>` : ''}</div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
             <button class="btn sm" data-rminus data-slice="${i}" data-prod="${esc(ln.productId)}" aria-label="Diminuisci">−</button>
             <input class="rq" data-slice="${i}" data-prod="${esc(ln.productId)}" type="number" min="0" inputmode="numeric" value="${ln.qty}" style="width:52px;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg,var(--surface));color:var(--txt);font-weight:800" aria-label="Quantità arrivata">
@@ -473,7 +473,7 @@ function batchSheet(lid, after) {
     else if (isTransfer) list = productsOf(lid).filter(p => stockOf(p, fromWh) > 0 && (warehouseAllowsProduct(lid, toWh, p) || stockOf(p, toWh) > 0));
     else list = productsOf(lid).filter(p => stockOf(p, fromWh) > 0);
     const term = bq.trim().toLowerCase();
-    if (term) list = list.filter(p => p.name.toLowerCase().includes(term));
+    if (term) list = list.filter(p => productMatches(p, term));
 
     const typeChip = (v, lbl, dis) => `<button class="chip ${type === v ? 'on' : ''}" data-btype="${v}" ${dis ? 'disabled' : ''}>${lbl}</button>`;
     const opts = (sel) => whs.map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
@@ -492,7 +492,7 @@ function batchSheet(lid, after) {
       // prelievo/trasferimento clampano al disponibile in origine → il + rispetta quel limite; carico senza limite
       const maxAttr = isCarico ? '' : ` data-max="${av}"`;
       return `<div class="row">
-        <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
+        <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}${codeTag(p.code)}</div>
           <div class="t2 muted">${isCarico ? 'giac.' : 'disp.'} ${av}</div></div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
           <button class="btn sm" data-bminus="${esc(p.id)}" aria-label="Diminuisci">−</button>
@@ -623,7 +623,7 @@ function pfNormalize(lid, f) {
 function pfApply(lid, f, list) {
   let out = list;
   const term = f.q.trim().toLowerCase();
-  if (term) out = out.filter(p => p.name.toLowerCase().includes(term));
+  if (term) out = out.filter(p => productMatches(p, term));
   // categoria: prodotto la cui categoria-top O sottocategoria coincide (come nel Database)
   if (f.cat !== 'all') out = out.filter(p => { const t = type(lid, p.typeId); return !!t && (p.typeId === f.cat || t.parentId === f.cat); });
   if (f.sub !== 'all') out = out.filter(p => p.typeId === f.sub);
@@ -716,7 +716,7 @@ function renderInventory(lid, l) {
     const val = invCounted(p) != null ? invCounted(p) : av;
     const diff = (parseInt(val, 10) || 0) !== av;
     return `<div class="row">
-      <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
+      <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}${codeTag(p.code)}</div>
         <div class="t2 muted">${prodMeta(lid, p, 'giac. attuale ' + av)}${diff ? ' · <span style="color:var(--accent)">modificato</span>' : ''}</div></div>
       <input class="iq" data-prod="${esc(p.id)}" type="number" min="0" inputmode="numeric" value="${esc(String(val))}" style="${NUMBOX}" aria-label="Contati">
     </div>`;
@@ -808,7 +808,7 @@ function renderThresholds(lid, l) {
   h += `<div class="list" data-thrlist>${list.map((p, i) => {
     const dMin = thrCurMin(p), dTarget = thrCurTarget(p);
     return `<div class="row">
-      <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}</div>
+      <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}${codeTag(p.code)}</div>
         <div class="t2 muted">${prodMeta(lid, p, 'giac. ' + totalStock(p))}${thrModified(p) ? ' · <span style="color:var(--accent)">modificato</span>' : ''}</div></div>
       <div style="display:flex;gap:6px;flex-shrink:0">
         <input class="thr" data-prod="${esc(p.id)}" data-col="min" data-idx="${i}" type="number" min="0" inputmode="numeric" placeholder="0" value="${dMin > 0 ? esc(String(dMin)) : ''}" style="${NUMBOX}" aria-label="Soglia minima">
@@ -899,7 +899,7 @@ function renderSchede(lid, l) {
   const cut = periodCutoff(sPeriod);
   if (cut) list = list.filter(s => (s.ts || 0) >= cut);
   const term = sq.trim().toLowerCase();
-  if (term) list = list.filter(s => (s.label || '').toLowerCase().includes(term) || (s.note || '').toLowerCase().includes(term) || s.lines.some(ln => (ln.name || '').toLowerCase().includes(term)));
+  if (term) list = list.filter(s => (s.label || '').toLowerCase().includes(term) || (s.note || '').toLowerCase().includes(term) || s.lines.some(ln => (ln.name || '').toLowerCase().includes(term) || (ln.code || '').toLowerCase().includes(term)));
 
   let h = `<div class="pagehead"><h1>🧾 Schede di movimento</h1><span class="sub">${esc((l.emoji || '📦') + ' ' + l.name)}</span></div>`;
   h += `<div class="btnrow" style="margin-bottom:10px"><button class="btn sm" data-back>← Giacenze</button></div>`;
@@ -970,7 +970,7 @@ function schedaDetail(lid, batchId, back, onChange) {
   // per la rettifica mostriamo il segno del delta (+ aumento / − diminuzione)
   const amt = ln => isRettifica ? `<span class="tnum ${ln.kind === 'out' ? 'neg' : 'pos'}" style="font-weight:800">${ln.kind === 'out' ? '−' : '+'}${ln.qty}</span>` : `<span class="amt tnum" style="font-weight:800">${ln.qty}</span>`;
   const rows = s.lines.map(ln => `<div class="row">
-    <div class="mid"><div class="t1">${esc(ln.name)}</div></div>
+    <div class="mid"><div class="t1">${esc(ln.name)}${codeTag(ln.code)}</div></div>
     ${amt(ln)}
   </div>`).join('');
   openSheet(`

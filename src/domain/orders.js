@@ -91,7 +91,7 @@ export function orderTotals(localeId) {
 // poi azzera l'ordine in corso. Ritorna l'ordine salvato (per generare subito i PDF).
 export function sendOrder(localeId, { deliveryPointId = null, note = '' } = {}) {
   const lines = orderLines(localeId).map(({ p, qty }) => ({
-    productId: p.id, name: p.name, qty, format: p.format || '',
+    productId: p.id, name: p.name, code: p.code || '', qty, format: p.format || '',
     supplierId: p.supplierId || null, supplierName: p.supplierId ? supplierName(p.supplierId) : null,
     notes: p.notes || '',
     // snapshot del prezzo di acquisto all'invio: i report storici sulla spesa non cambiano

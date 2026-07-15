@@ -3,7 +3,7 @@
 // Ogni mutazione lavora su `data` e chiama save(). Le categorie e i punti di consegna
 // sono ANNIDATI nel doc del locale; prodotti e fornitori sono collezioni top-level (localeId).
 import { data, save } from '../state/store.js';
-import { uid, round2 } from './util.js';
+import { uid, round2, normCode } from './util.js';
 import { loc, typesOf, subTypes } from './warehouse.js';
 
 // ---- Storico prezzi (Feature 6) ----
@@ -42,7 +42,8 @@ function reorder(list, id, dir) {
 // ---- Prodotti ----
 export function addProduct(localeId, rec, priceSource = 'manuale') {
   const order = data.products.filter(p => p.localeId === localeId).length;
-  const p = { id: uid(), localeId, name: '', format: '', typeId: null, supplierId: null, notes: '', order, stockByWh: {}, minStock: 0, targetStock: 0, price: 0, priceHistory: [], ...rec };
+  const p = { id: uid(), localeId, name: '', code: '', format: '', typeId: null, supplierId: null, notes: '', order, stockByWh: {}, minStock: 0, targetStock: 0, price: 0, priceHistory: [], ...rec };
+  p.code = normCode(p.code);   // canonicalizza il codice (trim + maiuscolo; '' = nessun codice)
   p.price = round2(+p.price || 0);
   // storico prezzi: se il prodotto nasce con un prezzo, seminiamo la prima voce (salvo storico già passato)
   if (!Array.isArray(p.priceHistory)) p.priceHistory = [];
@@ -51,6 +52,7 @@ export function addProduct(localeId, rec, priceSource = 'manuale') {
 }
 export function updateProduct(id, patch) {
   const p = data.products.find(x => x.id === id); if (!p) return;
+  if ('code' in patch) patch.code = normCode(patch.code);   // canonicalizza il codice se presente nel patch
   // storico prezzi: se il patch cambia il prezzo, registra la variazione (modifica manuale dall'editor)
   if ('price' in patch) recordPriceIfChanged(p, patch.price, 'manuale');
   Object.assign(p, patch); save();
@@ -64,7 +66,8 @@ export function deleteProduct(id) {
 export function duplicateProduct(id) {
   const src = data.products.find(x => x.id === id); if (!src) return;
   const order = data.products.filter(p => p.localeId === src.localeId).length;
-  const copy = { ...src, id: uid(), name: `${src.name} (copia)`, order, stockByWh: { ...(src.stockByWh || {}) } };
+  // il codice deve restare UNICO: la copia nasce senza codice (l'utente ne assegnerà uno nuovo)
+  const copy = { ...src, id: uid(), name: `${src.name} (copia)`, code: '', order, stockByWh: { ...(src.stockByWh || {}) } };
   data.products.push(copy); save(); return copy;
 }
 // riordino tra prodotti dello STESSO gruppo (stesso localeId + stessa categoria/tipologia)

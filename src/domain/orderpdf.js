@@ -5,6 +5,7 @@
 // nota fornitore in `order.supplierNotes[supplierId]`, punto di consegna con {name,address,phone,note}).
 // jsPDF è una dipendenza di BUILD (bundlata da Vite nel single-file): NON tocca lo zero-dip del server.
 import { jsPDF } from 'jspdf';
+import { product } from './warehouse.js';
 
 // Genera i PDF di un ordine: uno per fornitore (chiave '__none__' = senza fornitore).
 // Ritorna [{ supplierId, supplierName, filename, blob, righe, pezzi }] nell'ordine di apparizione delle righe.
@@ -58,11 +59,21 @@ export function generateOrderPdfs(locale, order, dp) {
 
     // Righe (nell'ordine di visualizzazione: order.lines è già ordinato)
     g.items.forEach(it => {
+      // codice: dallo snapshot della riga o risolto al volo dal prodotto (utile al fornitore)
+      const code = (it.code || product(it.productId)?.code || '').trim();
       doc.setFontSize(9.5); const lines = doc.splitTextToSize(it.name, 118);
       doc.text(lines, ml, y); doc.setFontSize(9); doc.text(it.format || '—', 145, y);
       doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(String(it.qty), mr, y, { align: 'right' });
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-      y += lines.length > 1 ? lines.length * 5 + 1 : 6.5;
+      let rowH = lines.length > 1 ? lines.length * 5 + 1 : 6.5;
+      if (code) {
+        // sotto-riga sobria col codice, in grigio più piccolo (non ruba spazio al nome)
+        doc.setFontSize(7.5); doc.setTextColor(120, 120, 120);
+        doc.text('Cod. ' + code, ml, y + lines.length * 5 - 1.5);
+        doc.setTextColor(15, 23, 42); doc.setFontSize(9);
+        rowH = Math.max(rowH, lines.length * 5 + 2.5);
+      }
+      y += rowH;
       doc.setDrawColor(245, 245, 245); doc.line(ml, y - 1.5, mr, y - 1.5); doc.setDrawColor(229, 231, 235);
       if (y > maxY) {
         if (supplierNote) addNoteFooter(doc, ml, mr, pageH, supplierNote);

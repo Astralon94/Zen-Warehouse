@@ -71,6 +71,26 @@ export function parseMoney(v) {
 
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// ---- Codice prodotto ----
+// Normalizzazione canonica: trim + MAIUSCOLO (leggibilità + unicità case-insensitive). '' = nessun codice.
+export const normCode = v => String(v ?? '').trim().toUpperCase();
+// Predicato di ricerca UNIFICATO per un prodotto: matcha nome O codice (parziale, case-insensitive).
+// `term` va passato GIÀ in minuscolo (com'è d'uso nei filtri, per non ri-abbassarlo a ogni prodotto).
+export function productMatches(p, term) {
+  if (!term) return true;
+  if ((p?.name || '').toLowerCase().includes(term)) return true;
+  const code = (p?.code || '').toLowerCase();
+  return !!code && code.includes(term);
+}
+// Variante per le righe d'ordine (storico): il codice può essere nello snapshot della riga
+// (`code`) oppure risolto al volo dal prodotto tramite `codeLookup(productId)`.
+export function lineMatches(ln, term, codeLookup) {
+  if (!term) return true;
+  if ((ln?.name || '').toLowerCase().includes(term)) return true;
+  const code = (ln?.code || (codeLookup ? codeLookup(ln?.productId) : '') || '').toLowerCase();
+  return !!code && code.includes(term);
+}
+
 export const fullName = e => `${(e.firstName || '').trim()} ${(e.lastName || '').trim()}`.trim() || 'Senza nome';
 export function initials(e) {
   const f = (e.firstName || '').trim(), l = (e.lastName || '').trim();

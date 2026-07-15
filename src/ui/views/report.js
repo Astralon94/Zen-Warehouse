@@ -4,7 +4,7 @@
 // grafici SVG a mano (zero dipendenze): andamento mensile a barre, quota fornitore a ciambella,
 // categorie a barre. Fallback prezzi: snapshot di riga → prezzo attuale prodotto → 0 (con avviso).
 import { esc, fmtEur } from '../../domain/util.js';
-import { printDocument, toast } from '../dom.js';
+import { printDocument, toast, codeTag } from '../dom.js';
 import { activeLocale, activeLocaleObj, ordersOf, suppliersOf } from '../../domain/warehouse.js';
 import { reportData, reportCategories, monthLabel } from '../../domain/report.js';
 import { can } from '../../state/auth.js';
@@ -23,11 +23,11 @@ const sliceColor = i => i < SLICE_ALPHA.length
   : `color-mix(in srgb, var(--accent) 12%, var(--card))`;
 
 // barra orizzontale proporzionale (label a sinistra; valore a destra già formattato)
-function bar(label, value, max, valLabel, sub = '') {
+function bar(label, value, max, valLabel, sub = '', codeHtml = '') {
   const pct = max > 0 ? Math.max(3, Math.round((value / max) * 100)) : 0;
   return `<div style="margin-bottom:9px">
     <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:3px">
-      <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(label)}</span>
+      <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${esc(label)}${codeHtml}</span>
       <span class="tnum" style="flex-shrink:0"><b>${esc(valLabel)}</b>${sub ? ` <span class="muted" style="font-size:11px">${esc(sub)}</span>` : ''}</span>
     </div>
     <div style="height:8px;background:var(--accent-soft);border-radius:6px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--accent);border-radius:6px"></div></div>
@@ -178,7 +178,7 @@ export function render() {
   // Top prodotti (spesa)
   const topN = r.topProducts.slice(0, 12);
   const maxP = topN[0]?.spend || 0;
-  h += `<div class="section-title" style="margin-top:16px">Prodotti per spesa</div><div class="card">${topN.map(p => bar(p.name, p.spend, maxP, fmtEur(p.spend), `${p.qty} pz · ${p.ordini} ord.`)).join('') || '<div class="empty">—</div>'}</div>`;
+  h += `<div class="section-title" style="margin-top:16px">Prodotti per spesa</div><div class="card">${topN.map(p => bar(p.name, p.spend, maxP, fmtEur(p.spend), `${p.qty} pz · ${p.ordini} ord.`, codeTag(p.code))).join('') || '<div class="empty">—</div>'}</div>`;
 
   // Spesa per fornitore (barre)
   const maxS = r.bySupplier[0]?.spend || 0;
@@ -230,7 +230,7 @@ function exportReport() {
       <tbody>${rows(r.byCategory, [{ v: o => o.name }, { v: o => fmtEur(o.spend), r: 1 }, { v: o => o.pieces, r: 1 }, { v: o => o.righe, r: 1 }])}</tbody></table>
     <h2>Prodotti per spesa</h2>
     <table><thead><tr><th>Prodotto</th><th style="text-align:right">Spesa</th><th style="text-align:right">Pezzi</th><th style="text-align:right">Ordini</th></tr></thead>
-      <tbody>${rows(r.topProducts, [{ v: o => o.name }, { v: o => fmtEur(o.spend), r: 1 }, { v: o => o.qty, r: 1 }, { v: o => o.ordini, r: 1 }])}</tbody></table>`;
+      <tbody>${rows(r.topProducts, [{ v: o => o.code ? o.code + ' · ' + o.name : o.name }, { v: o => fmtEur(o.spend), r: 1 }, { v: o => o.qty, r: 1 }, { v: o => o.ordini, r: 1 }])}</tbody></table>`;
   printDocument('Report ordini', body);
   toast('Report pronto per la stampa');
 }

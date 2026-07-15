@@ -1,6 +1,6 @@
 // ============ Vista Ordine: quantità per prodotto → PDF per fornitore + storico ============
-import { esc } from '../../domain/util.js';
-import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet } from '../dom.js';
+import { esc, productMatches } from '../../domain/util.js';
+import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet, codeTag } from '../dom.js';
 import {
   activeLocale, activeLocaleObj, productsOf, suppliersOf, supplierName, orderQty,
   topTypes, subTypes, type, deliveryPointsOf, orderLines, totalStock,
@@ -32,7 +32,7 @@ const filtersActive = () => !!(FILT.q.trim() || FILT.supplierId || FILT.category
 function applyFilters(lid, prods) {
   const term = FILT.q.trim().toLowerCase();
   let list = prods;
-  if (term) list = list.filter(p => (p.name || '').toLowerCase().includes(term));
+  if (term) list = list.filter(p => productMatches(p, term));
   if (FILT.supplierId) list = list.filter(p => (p.supplierId || '') === FILT.supplierId);
   if (FILT.categoryId) list = list.filter(p => {
     if (p.typeId === FILT.categoryId) return true;      // prodotto direttamente sulla categoria
@@ -150,7 +150,7 @@ function orderRow(lid, p) {
     </div>`
     : `<div class="amt tnum" style="font-weight:800;flex-shrink:0">${qty}</div>`;
   return `<div class="row ${qty > 0 ? 'sel' : ''}" data-pid="${p.id}">
-    <div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}</div>
+    <div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}${codeTag(p.code)}</div>
       <div class="t2">${esc(supplierName(p.supplierId))} ${stockInfo(p)}</div></div>
     ${control}
   </div>`;

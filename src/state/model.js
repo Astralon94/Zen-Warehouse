@@ -32,7 +32,8 @@ export const DEFAULT_DATA = () => {
     locali: [loc],
     // fornitore: {id,localeId,name,contact,phone,email,address,note,order}
     suppliers: [],
-    // prodotto: {id,localeId,name,typeId,supplierId,deliveryPointId,format,unit,notes,order,stockByWh:{whId:qty},minStock,targetStock,price,priceHistory}
+    // prodotto: {id,localeId,name,code,typeId,supplierId,deliveryPointId,format,unit,notes,order,stockByWh:{whId:qty},minStock,targetStock,price,priceHistory}
+    // code = codice prodotto FACOLTATIVO (trim+maiuscolo, univoco per locale); '' o assente = nessun codice.
     // stockByWh = giacenza per magazzino; minStock = soglia globale sul TOTALE tra i magazzini.
     // targetStock = scorta "obiettivo" (facoltativa) usata dalla proposta d'ordine automatica.
     // price = prezzo di acquisto (€ per unità di formato) — base della spesa nei report.

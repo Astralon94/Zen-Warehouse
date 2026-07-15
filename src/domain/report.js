@@ -97,7 +97,7 @@ export function reportData(localeId, opts = {}) {
       totals.pieces += qty; totals.righe++; totals.spend = round2(totals.spend + spend);
       m.pieces += qty; m.spend = round2(m.spend + spend);
       const pk = ln.productId || ln.name;
-      const p = prodMap[pk] || (prodMap[pk] = { name: ln.name, qty: 0, spend: 0, orders: new Set() });
+      const p = prodMap[pk] || (prodMap[pk] = { name: ln.name, code: ln.code || product(ln.productId)?.code || '', qty: 0, spend: 0, orders: new Set() });
       p.qty += qty; p.spend = round2(p.spend + spend); p.orders.add(o.id);
       const sk = ln.supplierId || '__none__';
       const s = supMap[sk] || (supMap[sk] = { name: ln.supplierName || 'Senza fornitore', pieces: 0, spend: 0, righe: 0, orders: new Set() });
@@ -111,7 +111,7 @@ export function reportData(localeId, opts = {}) {
   });
 
   // aggregati ordinati per SPESA (metrica principale); i pezzi restano come dato secondario
-  const topProducts = Object.values(prodMap).map(p => ({ name: p.name, qty: p.qty, spend: p.spend, ordini: p.orders.size })).sort((a, b) => b.spend - a.spend || b.qty - a.qty);
+  const topProducts = Object.values(prodMap).map(p => ({ name: p.name, code: p.code || '', qty: p.qty, spend: p.spend, ordini: p.orders.size })).sort((a, b) => b.spend - a.spend || b.qty - a.qty);
   const bySupplier = Object.values(supMap).map(s => ({ name: s.name, pieces: s.pieces, spend: s.spend, righe: s.righe, ordini: s.orders.size })).sort((a, b) => b.spend - a.spend || b.pieces - a.pieces);
   const byCategory = Object.values(catMap).map(c => ({ name: c.name, pieces: c.pieces, spend: c.spend, righe: c.righe })).sort((a, b) => b.spend - a.spend || b.pieces - a.pieces);
   const byMonth = Object.entries(monthMap).map(([month, v]) => ({ month, ...v })).sort((a, b) => a.month.localeCompare(b.month));

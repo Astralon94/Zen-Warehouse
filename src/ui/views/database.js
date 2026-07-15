@@ -1,12 +1,12 @@
 // ============ Vista Database: prodotti, categorie, fornitori, punti di consegna ============
 import { data, save } from '../../state/store.js';
-import { esc, fmtEur, parseMoney } from '../../domain/util.js';
+import { esc, fmtEur, parseMoney, productMatches, normCode } from '../../domain/util.js';
 import { FORMATS } from '../../state/model.js';
-import { openSheet, closeSheet, toast, confirmDialog } from '../dom.js';
+import { openSheet, closeSheet, toast, confirmDialog, codeTag } from '../dom.js';
 import { importProductsFromInvoice } from '../invoice-import.js';
 import {
   activeLocale, activeLocaleObj, productsOf, suppliersOf, supplierName,
-  topTypes, subTypes, hasSubtypes, type, typeName, deliveryPointsOf, totalStock,
+  topTypes, subTypes, hasSubtypes, type, typeName, deliveryPointsOf, totalStock, productByCode,
 } from '../../domain/warehouse.js';
 import {
   addProduct, updateProduct, deleteProduct, duplicateProduct, reorderProducts,
@@ -71,7 +71,7 @@ export function render() {
 function filteredProducts(lid) {
   const term = q.trim().toLowerCase();
   let list = productsOf(lid);
-  if (term) list = list.filter(p => p.name.toLowerCase().includes(term) || supplierName(p.supplierId).toLowerCase().includes(term));
+  if (term) list = list.filter(p => productMatches(p, term) || supplierName(p.supplierId).toLowerCase().includes(term));
   return list.filter(p => {
     if (catFilter === 'all') return true;
     if (catFilter === '__none__') return !type(lid, p.typeId);
@@ -152,7 +152,7 @@ function productRow(lid, p) {
   const stockInfo = (p.minStock || 0) > 0 || tot > 0
     ? `<span style="font-size:11px;color:${low ? 'var(--red,#c2685f)' : 'var(--muted)'}">· scorta ${tot}${p.minStock ? '/' + p.minStock : ''}${low ? ' ⚠️' : ''}</span>` : '';
   const priceInfo = (p.price || 0) > 0 ? `<span class="tnum" style="font-size:11px;color:var(--muted)">· ${fmtEur(p.price)}</span>` : '';
-  const mid = `<div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}</div>
+  const mid = `<div class="mid"><div class="t1">${esc(p.name)} ${fmtBadge(p.format)}${codeTag(p.code)}</div>
       <div class="t2">${esc(supplierName(p.supplierId))} ${priceInfo}${p.notes ? ' · ' + esc(p.notes) : ''} ${stockInfo}</div></div>`;
   // riga in modalità selezione: checkbox al posto del drag handle, senza pulsanti d'azione
   if (selMode) {
@@ -190,7 +190,11 @@ function productModal(lid, id, prefill) {
 
   openSheet(`
     <h2>${p ? 'Modifica' : 'Nuovo'} prodotto</h2>
-    <div class="field"><label>Nome *</label><input id="p_name" value="${esc(p?.name || '')}" placeholder="Es. Acqua Minerale 1,5L"></div>
+    <div class="frow">
+      <div class="field"><label>Nome *</label><input id="p_name" value="${esc(p?.name || '')}" placeholder="Es. Acqua Minerale 1,5L"></div>
+      <div class="field"><label>Codice</label><input id="p_code" value="${esc(p?.code || '')}" placeholder="Facoltativo" autocapitalize="characters" spellcheck="false" style="text-transform:uppercase">
+        <div class="muted" style="font-size:12px;margin-top:4px">Univoco per locale.</div></div>
+    </div>
     <div class="frow">
       <div class="field"><label>Formato</label><select id="p_fmt">${fmtOpts}</select></div>
       <div class="field"><label>Categoria</label><select id="p_cat">${catOpts}</select></div>
@@ -218,11 +222,14 @@ function productModal(lid, id, prefill) {
       const collect = () => {
         const name = g('#p_name').value.trim();
         if (!name) { toast('Il nome è obbligatorio'); return null; }
+        const code = normCode(g('#p_code').value);
+        // unicità del codice (case-insensitive, per locale): blocca con messaggio che nomina il prodotto in conflitto
+        if (code) { const owner = productByCode(lid, code, id); if (owner) { toast('Codice già usato da: ' + owner.name); return null; } }
         const catV = g('#p_cat').value || null;
         const subEl = g('#p_subcat');
         const subV = subEl ? (subEl.value || null) : null;
         return {
-          name, format: g('#p_fmt').value, typeId: subV || catV || null,
+          name, code, format: g('#p_fmt').value, typeId: subV || catV || null,
           supplierId: g('#p_sup').value || null, notes: g('#p_notes').value.trim(),
           minStock: parseInt(g('#p_min').value, 10) || 0,
           targetStock: parseInt(g('#p_target').value, 10) || 0,

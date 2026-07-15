@@ -1,7 +1,7 @@
 // ============ Vista Storico ordini (Zen-Warehouse) ============
-import { esc } from '../../domain/util.js';
-import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet } from '../dom.js';
-import { activeLocale, activeLocaleObj, ordersOf, deliveryPointsOf, loc, warehousesOf } from '../../domain/warehouse.js';
+import { esc, lineMatches } from '../../domain/util.js';
+import { openSheet, closeSheet, toast, confirmDialog, showPdfDownloadSheet, codeTag } from '../dom.js';
+import { activeLocale, activeLocaleObj, ordersOf, deliveryPointsOf, loc, warehousesOf, product } from '../../domain/warehouse.js';
 import { generateOrderPdfs, orderSummary } from '../../domain/orderpdf.js';
 import { deleteOrder, reorderFrom } from '../../domain/orders.js';
 import { receiveOrder } from '../../domain/stock.js';
@@ -48,7 +48,7 @@ export function render() {
   const cut = periodCutoff(period);
   if (cut) list = list.filter(o => (o.sentAt || o.createdAt || 0) >= cut);
   const term = q.trim().toLowerCase();
-  if (term) list = list.filter(o => (o.lines || []).some(ln => (ln.name || '').toLowerCase().includes(term) || (ln.supplierName || '').toLowerCase().includes(term)));
+  if (term) list = list.filter(o => (o.lines || []).some(ln => lineMatches(ln, term, pid => product(pid)?.code) || (ln.supplierName || '').toLowerCase().includes(term)));
 
   // ricerca + filtro periodo (stesso select semplice della visuale Schede)
   const perOpts = PERIODS.map(([v, lbl]) => `<option value="${v}" ${period === v ? 'selected' : ''}>${esc(lbl)}</option>`).join('');
@@ -84,7 +84,7 @@ function openOrder(id) {
   const dp = dpName(lid, o.deliveryPointId);
   const groups = groupBySupplier(o);
   const groupsHtml = groups.map(g => {
-    const rows = g.items.map(it => `<div class="row"><div class="mid"><div class="t1">${esc(it.name)} ${it.format ? `<span class="badge soft" style="font-size:10px">${esc(it.format)}</span>` : ''}</div>${it.notes ? `<div class="t2">${esc(it.notes)}</div>` : ''}</div><div class="amt tnum" style="font-weight:800">${it.qty}</div></div>`).join('');
+    const rows = g.items.map(it => `<div class="row"><div class="mid"><div class="t1">${esc(it.name)} ${it.format ? `<span class="badge soft" style="font-size:10px">${esc(it.format)}</span>` : ''}${codeTag(it.code || product(it.productId)?.code)}</div>${it.notes ? `<div class="t2">${esc(it.notes)}</div>` : ''}</div><div class="amt tnum" style="font-weight:800">${it.qty}</div></div>`).join('');
     const pezzi = g.items.reduce((a, it) => a + it.qty, 0);
     return `<div class="section-title">🚚 ${esc(g.name)} <span class="muted" style="font-weight:500;font-size:12px">· ${g.items.length} rig${g.items.length === 1 ? 'a' : 'he'} · ${pezzi} pz</span></div><div class="list">${rows}</div>`;
   }).join('');

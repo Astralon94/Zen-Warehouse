@@ -165,8 +165,9 @@ export function schede(localeId) {
       };
       byBatch.set(m.batchId, s);
     }
-    // kind sulla riga: consente alla rettifica di mostrare il segno (+/−) del delta
-    s.lines.push({ name: m.name || (product(m.productId)?.name) || '—', qty: m.qty || 0, kind: m.kind });
+    // kind sulla riga: consente alla rettifica di mostrare il segno (+/−) del delta.
+    // code: risolto al volo dal prodotto (i movimenti storici non lo hanno nello snapshot).
+    s.lines.push({ name: m.name || (product(m.productId)?.name) || '—', code: product(m.productId)?.code || '', qty: m.qty || 0, kind: m.kind });
     if ((m.ts || 0) < s.ts) { s.ts = m.ts || 0; s.date = m.date || s.date; }
   });
   return [...byBatch.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0));

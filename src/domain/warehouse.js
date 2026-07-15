@@ -1,6 +1,7 @@
 // ============ Logica di dominio: lookup e scope per locale (Zen-Warehouse) ============
 // Solo derivazioni pure sui FATTI in `data`. Niente stato salvato di riepilogo.
 import { data } from '../state/store.js';
+import { normCode } from './util.js';
 
 // ---- locale attivo / lookup ----
 export const activeLocale = () => data.settings.activeLocale || (data.locali[0]?.id ?? null);
@@ -9,6 +10,15 @@ export const activeLocaleObj = () => loc(activeLocale());
 
 export const supplier = id => data.suppliers.find(s => s.id === id) || null;
 export const product = id => data.products.find(p => p.id === id) || null;
+
+// Prodotto del locale che USA GIÀ questo codice (normalizzato, case-insensitive), escludendo `exceptId`
+// (il prodotto in modifica). Serve al controllo di unicità: ritorna il prodotto in conflitto o null.
+// Il codice vuoto non vincola mai (più prodotti possono restare senza codice).
+export function productByCode(localeId, code, exceptId = null) {
+  const c = normCode(code);
+  if (!c) return null;
+  return data.products.find(p => p.localeId === localeId && p.id !== exceptId && normCode(p.code) === c) || null;
+}
 
 // categorie/tipologie e punti di consegna sono config del locale (annidati nel doc)
 export const typesOf = localeId => (loc(localeId)?.types || []);

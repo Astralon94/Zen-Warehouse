@@ -1,6 +1,14 @@
 // ============ Helper UI: toast, sheet/modal, conferme, stampa, download ============
 import { esc } from '../domain/util.js';
 
+// Badge del CODICE prodotto: piccolo, monospace, muted — secondario rispetto al nome (bold) e al
+// badge formato (accento). Vuoto se il prodotto non ha codice (niente placeholder). Reso ovunque
+// compare il nome prodotto, tramite questa unica funzione per coerenza visiva.
+export function codeTag(code) {
+  const c = String(code || '').trim();
+  return c ? ` <span class="pcode">${esc(c)}</span>` : '';
+}
+
 let toastTimer;
 export function toast(msg) {
   let t = document.getElementById('toast');
