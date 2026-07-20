@@ -1,38 +1,64 @@
-# Zen-Warehouse
+# Zen Warehouse
 
-Versione **profonda e persistente** di Zen-Orders, in linea con Zen-Finance/Human/Staff:
-app a **server locale** (Node `node:http` + database `node:sqlite`, zero dipendenze a runtime),
-frontend SPA (Vite) servito da `public/index.html`. Gira **solo in locale sul Mac**
-(`http://localhost:4334`). Accento di brand: prugna `#7a6a99` (dark `#b39ac9`).
+Ordini fornitori e magazzino **self-hosted e 100% locale**, pensato per attività con più punti vendita: catalogo prodotti, ordini per fornitore con PDF pronti da inviare, storico, report e scorte. Niente cloud, niente abbonamenti: un server Node **senza dipendenze a runtime** e un database SQLite in un singolo file.
 
-Zen-Orders resta com'è (PWA semplice su Netlify): Warehouse **non** la sostituisce, la affianca
-aggiungendo profondità grazie al database (storico ordini, report, riepiloghi, scorte).
+## Caratteristiche
 
-## Avvio
+- **Organizzazione per locale** — ogni punto vendita ha le sue categorie/tipologie (con sottocategorie), i suoi punti di consegna e il suo giro di ordini; prodotti e fornitori condivisi dove serve.
+- **Ordine** — schermata di compilazione rapida per fornitore: quantità sui prodotti, note, generazione del **PDF per fornitore** pronto da inviare.
+- **Storico** — tutti gli ordini inviati, ricercabili e riapribili; un ordine passato si può clonare come base per il prossimo.
+- **Report** — analisi su ordinato e fornitori per periodo, con riepiloghi e confronti.
+- **Magazzino** — scorte con movimenti di carico/scarico e situazione per prodotto.
+- **Database** — anagrafiche di prodotti, categorie, fornitori e punti di consegna con editing rapido.
+- **Dashboard** — quadro d'insieme dell'attività recente.
+- **Multi-utente** — login con permessi granulari per sezione e azione.
+- **Aggiornamenti in-app** — l'app controlla le release di questo repository e si aggiorna da sola (vedi sotto).
+
+## Requisiti
+
+- **Node.js ≥ 22.5** (usa il modulo nativo `node:sqlite`; consigliata l'ultima LTS).
+- Nessuna dipendenza a runtime: `npm install` serve solo per lo sviluppo del frontend.
+
+## Avvio rapido
+
 ```bash
-cd Zen-Warehouse && npm start      # = node server.js  (porta 4334)
-# oppure il launcher della famiglia: ./avvia-zen.command
+git clone https://github.com/Astralon94/Zen-Warehouse.git
+cd Zen-Warehouse
+npm start            # avvia il server su http://localhost:4334
 ```
-Build del frontend (dopo modifiche a `src/`): `npm run build` (Vite → `public/index.html`).
 
-## Architettura (come la triade)
+Al primo avvio viene creato l'utente **admin / admin**: cambiare subito la password (Impostazioni → Utenti). La porta si cambia con `PORT=8080 npm start`.
+
+I dati vivono in `data/zenwarehouse.db` (creato al primo avvio, con backup automatici in `data/backups/`): la cartella `data/` non è mai versionata e non viene mai toccata dagli aggiornamenti.
+
+> **Nota di sicurezza** — l'app è pensata per uso locale o su rete privata. Se esposta a Internet, va protetta con un livello di autenticazione aggiuntivo (VPN o reverse proxy con access control).
+
+## Aggiornamenti
+
+L'app controlla all'avvio (e ogni 12 ore, o con "Controlla ora" in Impostazioni) il manifest dell'ultima [release](https://github.com/Astralon94/Zen-Warehouse/releases) di questo repository, scarica il pacchetto, salva una copia dei file sovrascritti in `data/updates-backup/` e si riavvia sul nuovo codice. La variabile `ZEN_UPDATE_URL` permette di puntare a un altro manifest, oppure — se vuota — di disattivare gli aggiornamenti.
+
+## Architettura
+
 ```
-server.js          server node:http — statico da public/ + API /api
-server/            schema.js · db.js (node:sqlite) · serialize.js (import/export + changeset)
-src/               frontend Vite: state/ (model, store), domain/, ui/ (app + views)
-public/            index.html BUILDATO + manifest/icone
-data/              zenwarehouse.db (+ backups/) — DATI LOCALI, NON versionati
+server.js          server node:http — statici da public/ + API /api
+server/            schema, DB (node:sqlite, WAL), serializzazione/changeset, auth, updater
+src/               frontend (Vite): state/, domain/, ui/ (viste)
+public/index.html  SPA buildata, self-contained: è ciò che il server serve
+scripts/           utilità: reset DB, reset admin, test round-trip, build pacchetto update
+data/              database + backup — locale, mai versionato
 ```
-Persistenza a **changeset granulare** (`POST /api/changes`), **spia di salvataggio** affidabile,
-**guardia di concorrenza 409** (multi-scheda) e `Cache-Control: no-cache` ereditati dalla famiglia.
 
-## Dominio (dalla base Zen-Orders)
-Organizzazione **per locale**: ogni locale ha `types` (categorie/tipologie con sottocategorie) e
-`deliveryPoints` (annidati), più `products`, `suppliers`, `orders` (storico) e `stockMoves` (scorte).
+Principi: il documento JSON di ogni record è la **fonte di verità** (colonne SQL solo per query/indici); il frontend invia **changeset granulari** (`POST /api/changes`) con guardia di concorrenza; i valori derivati (totali, riepiloghi) **non vengono mai salvati** — si salvano solo i fatti.
 
-## Stato
-- **Fase 1 — fatta**: fondamenta (server + DB + schema + shell: Dashboard, Impostazioni con
-  gestione locali, import/export, reset).
-- **Fase 2 — in arrivo**: porting di tutte le funzioni di Orders (Database prodotti,
-  Fornitori, Punti di consegna, schermata Ordine, generazione PDF per fornitore).
-- **Fase 3 — in arrivo**: profondità (Storico ordini, Report/analisi, Scorte/magazzino).
+## Sviluppo
+
+```bash
+npm install          # dipendenze di build (Vite)
+npm run dev          # frontend in sviluppo
+npm run build        # build → public/index.html
+npm run test:roundtrip
+```
+
+## Famiglia Zen
+
+Zen Warehouse fa parte di una piccola famiglia di app self-hosted con la stessa architettura: [Zen Finance](https://github.com/Astralon94/Zen-Finance) (contabilità e fatture) e [Zen Human](https://github.com/Astralon94/Zen-Human) (presenze e turni del personale).
