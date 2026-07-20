@@ -29,7 +29,7 @@ In `~/Library/Application Support/Claude/claude_desktop_config.json`, dentro `mc
 ```json
 "zen-warehouse": {
   "command": "node",
-  "args": ["/Users/fmdesantis/Zen-Manager-Apps/Zen-Warehouse/mcp/server.mjs"]
+  "args": ["/percorso/assoluto/di/Zen-Manager-Apps/Zen-Warehouse/mcp/server.mjs"]
 }
 ```
 Poi riavvia Claude Desktop. Esempi: «cosa è sotto scorta?», «ultimi ordini», «prodotti più
