@@ -59,6 +59,10 @@ npm run build        # build → public/index.html
 npm run test:roundtrip
 ```
 
+## Licenza
+
+Rilasciato sotto licenza [MIT](LICENSE).
+
 ## Famiglia Zen
 
 Zen Warehouse fa parte di una piccola famiglia di app self-hosted con la stessa architettura: [Zen Finance](https://github.com/Astralon94/Zen-Finance) (contabilità e fatture) e [Zen Human](https://github.com/Astralon94/Zen-Human) (presenze e turni del personale).
