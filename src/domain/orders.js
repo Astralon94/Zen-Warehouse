@@ -102,7 +102,10 @@ export function orderTotals(localeId) {
 // Invia l'ordine: crea il record nello storico (righe in ordine di visualizzazione,
 // annotando nome/formato/fornitore così restano leggibili anche se il prodotto cambia),
 // poi azzera l'ordine in corso. Ritorna l'ordine salvato (per generare subito i PDF).
-export function sendOrder(localeId, { deliveryPointId = null, note = '' } = {}) {
+// `stockLoad` (default true): decide se l'ordine dovrà passare da "📥 Carico da ordini" in Magazzino.
+// È una scelta PER-INVIO (attiva di default, anche per i riordini): disattivandola l'ordine non
+// comparirà mai tra le ricezioni pendenti — utile quando i suoi prodotti non hanno conteggio scorte.
+export function sendOrder(localeId, { deliveryPointId = null, note = '', stockLoad = true } = {}) {
   const lines = orderLines(localeId).map(({ p, qty }) => ({
     productId: p.id, name: p.name, code: p.code || '', qty, format: p.format || '',
     supplierId: p.supplierId || null, supplierName: p.supplierId ? supplierName(p.supplierId) : null,
@@ -127,6 +130,9 @@ export function sendOrder(localeId, { deliveryPointId = null, note = '' } = {}) 
     deliveryPointId: deliveryPointId || null, note: note || '', supplierNotes, lines,
     receivedSuppliers: {}, // ricezione per-fornitore (vuota alla creazione)
   };
+  // Salviamo il flag SOLO quando è disattivato: l'assenza del campo = comportamento storico
+  // (carico previsto), così gli ordini esistenti non richiedono migrazioni.
+  if (stockLoad === false) order.stockLoad = false;
   data.orders.push(order);
   const l = loc(localeId); if (l) l.currentOrder = {};
   save();

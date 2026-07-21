@@ -169,6 +169,8 @@ function addDeliveryBox(doc, ml, mr, y, dp) {
 // ============ Scheda di movimento (DDT interno): trasferimento / prelievo multi-prodotto ============
 // Un SOLO jsPDF che accompagna la merce. `scheda` = { type, fromWh, toWh, note, ts, date, lines:[{name,qty,format}] }.
 // `warehouses` = elenco magazzini del locale (per risolvere i nomi). Ritorna { supplierName(=etichetta), filename, blob, righe, pezzi }.
+// Estensioni per il DDT differito DA CONSEGNARE: `scheda.destLabel` (destinazione libera dell'uscita "fuori
+// magazzino") e `scheda.pending` (true → mostra lo stato "DA CONSEGNARE" sotto il titolo).
 export function generateMovementSlip(locale, scheda, warehouses) {
   const whName = id => (warehouses || []).find(w => w.id === id)?.name || '—';
   const when = scheda.ts || Date.now();
@@ -200,12 +202,18 @@ export function generateMovementSlip(locale, scheda, warehouses) {
     doc.text(doc.splitTextToSize(slipName, mr - ml)[0] || slipName, ml, y);
     doc.setTextColor(15, 23, 42);
   }
+  // Stato "DA CONSEGNARE" per il DDT differito (prima della convalida)
+  if (scheda.pending) {
+    y += 6.5; doc.setFontSize(9.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(0xb0, 0x8a, 0x4e);
+    doc.text('DA CONSEGNARE', ml, y); doc.setTextColor(15, 23, 42);
+  }
   y += 4;
   doc.setDrawColor(229, 231, 235); doc.setLineWidth(0.4); doc.line(ml, y + 2, mr, y + 2); y += 11;
 
-  // Box Da / A
+  // Box Da / A. Per l'uscita "fuori magazzino" con destinazione libera (destLabel), la mostriamo come "A".
+  const destFree = (scheda.destLabel || '').trim();
   const from = isRettifica ? whName(scheda.toWh) : isCarico ? 'Esterno / fornitore' : whName(scheda.fromWh);
-  const dest = isRettifica ? 'Rettifica giacenza' : isCarico ? whName(scheda.toWh) : isTransfer ? whName(scheda.toWh) : 'Fuori magazzino';
+  const dest = isRettifica ? 'Rettifica giacenza' : isCarico ? whName(scheda.toWh) : isTransfer ? whName(scheda.toWh) : (destFree || 'Fuori magazzino');
   y = addRouteBox(doc, ml, mr, y, from, dest);
 
   // Intestazione tabella

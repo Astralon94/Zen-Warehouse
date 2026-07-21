@@ -305,36 +305,55 @@ function openNoteSheet(lid, key, refresh) {
     });
 }
 
-// Scelta punto di consegna (se presenti), poi genera.
-//  - nessun punto → genera senza chiedere;
-//  - UN solo punto → usa quello senza chiedere (lo ricorda);
-//  - più punti → chiede, con l'ULTIMO usato preselezionato in cima (badge "ultimo").
+// Sheet di invio: punto di consegna (se più d'uno) + spunta "Carico da ordini", poi genera.
+// La spunta è ATTIVA di default e vale solo per QUESTO invio (compresi i riordini): se disattivata
+// l'ordine non passerà da "📥 Carico da ordini" in Magazzino (utile per prodotti senza scorte).
+// Il punto di consegna viene preselezionato: unico → quello; più d'uno → l'ULTIMO usato (badge "ultimo").
 function startGenerate(lid, rerender) {
   const dps = deliveryPointsOf(lid);
-  if (!dps.length) return generate(lid, null, rerender);
-  if (dps.length === 1) { rememberDeliveryPoint(lid, dps[0].id); return generate(lid, dps[0].id, rerender); }
   const lastId = lastDeliveryPoint(lid);
-  const pick = dpId => { rememberDeliveryPoint(lid, dpId); closeSheet(); generate(lid, dpId, rerender); };
-  // ordina con l'ultimo usato in cima
+  // preselezione punto di consegna in base a quelli disponibili e all'ultimo usato
+  let selDp = dps.length === 1 ? dps[0].id
+    : (dps.length > 1 && dps.some(d => d.id === lastId)) ? lastId : null;
+  // con più punti: elenco selezionabile (ultimo usato in cima) + riga "Senza punto"
   const ordered = lastId ? [...dps].sort((a, b) => (a.id === lastId ? -1 : 0) - (b.id === lastId ? -1 : 0)) : dps;
+  const rowBg = id => (id || null) === selDp ? ' style="background:var(--accent-soft)"' : '';
+  const dpBlock = dps.length > 1 ? `
+    <div class="section-title" style="margin-top:0">📍 Punto di consegna</div>
+    <div class="list">${ordered.map(d => `<div class="row click" data-dp="${d.id}"${rowBg(d.id)}><div class="emoji">📍</div>
+      <div class="mid"><div class="t1">${esc(d.name)}${d.id === lastId ? ' <span class="badge soft" style="font-size:10px">ultimo</span>' : ''}</div>${d.address ? `<div class="t2">${esc(d.address)}</div>` : ''}</div></div>`).join('')}
+      <div class="row click" data-dp=""${rowBg('')}><div class="emoji">✖️</div><div class="mid"><div class="t1">Senza punto</div></div></div></div>` : '';
   openSheet(`
-    <h2>📍 Punto di consegna</h2>
-    <div class="sheetsub">Dove va consegnato questo ordine? Comparirà su tutti i PDF inviati ai fornitori.</div>
-    <div class="list">${ordered.map(d => `<div class="row click" data-dp="${d.id}"${d.id === lastId ? ' style="background:var(--accent-soft)"' : ''}><div class="emoji">📍</div>
-      <div class="mid"><div class="t1">${esc(d.name)}${d.id === lastId ? ' <span class="badge soft" style="font-size:10px">ultimo</span>' : ''}</div>${d.address ? `<div class="t2">${esc(d.address)}</div>` : ''}</div></div>`).join('')}</div>
-    <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn" data-none>Senza punto</button></div>`,
+    <h2>📤 Invia ordine</h2>
+    <div class="sheetsub">L'ordine viene salvato nello storico e vengono generati i PDF per i fornitori.</div>
+    ${dpBlock}
+    <label class="row click" style="align-items:flex-start;margin-top:14px;cursor:pointer">
+      <input type="checkbox" id="gen_stock" checked style="margin:3px 4px 0 0;flex-shrink:0">
+      <div class="mid"><div class="t1">Carica in magazzino alla consegna <span class="muted" style="font-weight:500">(Carico da ordini)</span></div>
+        <div class="t2">Disattiva se i prodotti di quest'ordine non hanno conteggio in magazzino.</div></div>
+    </label>
+    <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>📤 Invia ordine</button></div>`,
     sheet => {
       sheet.querySelector('[data-cancel]').onclick = closeSheet;
-      sheet.querySelector('[data-none]').onclick = () => { rememberDeliveryPoint(lid, null); closeSheet(); generate(lid, null, rerender); };
-      sheet.querySelectorAll('[data-dp]').forEach(el => el.onclick = () => pick(el.dataset.dp));
+      // selezione punto: evidenzia la riga scelta e memorizza selDp
+      sheet.querySelectorAll('[data-dp]').forEach(el => el.onclick = () => {
+        selDp = el.dataset.dp || null;
+        sheet.querySelectorAll('[data-dp]').forEach(r => r.style.background = (r.dataset.dp || null) === selDp ? 'var(--accent-soft)' : '');
+      });
+      sheet.querySelector('[data-ok]').onclick = () => {
+        const stockLoad = sheet.querySelector('#gen_stock').checked;
+        rememberDeliveryPoint(lid, selDp);
+        closeSheet();
+        generate(lid, selDp, stockLoad, rerender);
+      };
     });
 }
 
 // Invia l'ordine (→ storico), poi genera i PDF SEPARATI (uno per fornitore) e mostra la modale
 // di download: ogni file è pronto da inviare al rispettivo fornitore.
-function generate(lid, dpId, rerender) {
+function generate(lid, dpId, stockLoad, rerender) {
   const l = activeLocaleObj();
-  const order = sendOrder(lid, { deliveryPointId: dpId });
+  const order = sendOrder(lid, { deliveryPointId: dpId, stockLoad });
   if (!order) { toast('Nessun prodotto nell\'ordine'); return; }
   const dp = dpId ? deliveryPointsOf(lid).find(d => d.id === dpId) : null;
   rerender();

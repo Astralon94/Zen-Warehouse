@@ -65,7 +65,11 @@ export function defaultLocale(id, name) {
     // note "permanenti" per fornitore: mappa { supplierId: nota } — stampate sul PDF di quel fornitore
     supplierNotes: {},
     // ordine in corso: mappa { productId: quantità } — effimero finché non "inviato" (→ orders[])
-    currentOrder: {}
+    currentOrder: {},
+    // DDT interni differiti DA CONSEGNARE (trasferimento magazzino→magazzino o uscita "fuori magazzino"):
+    // {id,createdAt,type:'transfer'|'out',fromWh,toWh|null,destLabel,note,lines:[{productId,name,format,qty}],status:'pending'}
+    // I FATTI nascono solo alla convalida (→ stockMoves via applyMovementBatch); qui vivono le richieste in attesa.
+    pendingTransfers: []
   };
 }
 
@@ -95,6 +99,8 @@ export function migrate(d) {
     l.warehouses.forEach((w, k) => { if (!w.id) w.id = uid(); if (!w.name) w.name = 'Magazzino'; if (w.order == null) w.order = k; if (!Array.isArray(w.typeIds)) w.typeIds = []; });
     if (!l.supplierNotes || typeof l.supplierNotes !== 'object' || Array.isArray(l.supplierNotes)) l.supplierNotes = {};
     if (!l.currentOrder || typeof l.currentOrder !== 'object' || Array.isArray(l.currentOrder)) l.currentOrder = {};
+    // DDT interni differiti in attesa di consegna (additivo, retrocompatibile): default lista vuota
+    if (!Array.isArray(l.pendingTransfers)) l.pendingTransfers = [];
     l.types.forEach((t, k) => { if (!t.id) t.id = uid(); if (t.parentId === undefined) t.parentId = null; if (t.order == null) t.order = k; });
     l.deliveryPoints.forEach((p, k) => { if (!p.id) p.id = uid(); if (p.order == null) p.order = k; });
   });

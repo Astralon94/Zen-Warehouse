@@ -278,6 +278,7 @@ function refreshOrderStatus(order) {
 // doppi carichi, e allinea lo stato per-fornitore (tutti i gruppi ricevuti).
 export function receiveOrder(order, whId) {
   if (!order || order.status === 'received' || order.status === 'closed') return 0;
+  if (order.stockLoad === false) return 0; // ordine senza carico: non entra mai nel ciclo di ricezione
   if (!whId) return 0;
   let n = 0;
   const now = Date.now();
@@ -305,6 +306,7 @@ export function pendingReceipts(localeId) {
   const orders = ordersOf(localeId).slice().sort((a, b) => (b.sentAt || b.createdAt || 0) - (a.sentAt || a.createdAt || 0));
   const slices = [];
   orders.forEach(order => {
+    if (order.stockLoad === false) return; // carico disattivato all'invio: mai in "Carico da ordini"
     const rec = order.receivedSuppliers || {};
     const dis = order.dismissedSuppliers || {};
     // raggruppa le righe per fornitore mantenendo l'ordine di comparsa
@@ -361,6 +363,74 @@ export function dismissReceiptSupplier(order, supplierId) {
   refreshOrderStatus(order);
   save();
   return true;
+}
+
+// ---- DDT interni differiti: trasferimenti/uscite DA CONSEGNARE (annidati nel doc del locale) ----
+// A differenza di applyMovementBatch (che applica SUBITO i movimenti), un DDT interno resta "pendente":
+// si stampa e accompagna la merce; solo alla CONVALITA i FATTI entrano in stockMoves. I pendenti vivono
+// in `locale.pendingTransfers` (come currentOrder/supplierNotes): nessuna collezione/schema nuovo.
+//   type:'transfer' → da fromWh a toWh · type:'out' → uscita da fromWh "fuori magazzino" (destLabel = destinatario/causale).
+// Le righe fanno SNAPSHOT di nome/formato (come le righe ordine): leggibili anche se il prodotto cambia.
+export const pendingTransfersOf = localeId => (loc(localeId)?.pendingTransfers || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+export const pendingTransfer = (localeId, id) => (loc(localeId)?.pendingTransfers || []).find(r => r.id === id) || null;
+
+// Crea un DDT pendente. `lines` = [{productId, qty}]; qty ≤ 0 scartate. Ritorna il record o null (nessuna riga).
+export function createPendingTransfer(localeId, { type, fromWh, toWh, destLabel, note, lines }) {
+  const l = loc(localeId); if (!l) return null;
+  const isOut = type === 'out';
+  if (!fromWh) return null;
+  if (!isOut && (!toWh || toWh === fromWh)) return null;   // transfer: destinazione valida e diversa
+  const out = [];
+  (lines || []).forEach(ln => {
+    const p = product(ln.productId); if (!p) return;
+    const qty = Math.floor(+ln.qty) || 0; if (qty <= 0) return;
+    out.push({ productId: p.id, name: p.name, format: p.format || '', qty });
+  });
+  if (!out.length) return null;
+  if (!Array.isArray(l.pendingTransfers)) l.pendingTransfers = [];
+  const rec = {
+    id: uid(), createdAt: Date.now(), type: isOut ? 'out' : 'transfer',
+    fromWh, toWh: isOut ? null : toWh, destLabel: (destLabel || '').trim(),
+    note: (note || '').trim(), lines: out, status: 'pending',
+  };
+  l.pendingTransfers.push(rec);
+  save();
+  return rec;
+}
+
+// Annulla un DDT pendente senza generare movimenti: la richiesta sparisce dai "da consegnare".
+export function cancelPendingTransfer(localeId, id) {
+  const l = loc(localeId); if (!l || !Array.isArray(l.pendingTransfers)) return false;
+  const before = l.pendingTransfers.length;
+  l.pendingTransfers = l.pendingTransfers.filter(r => r.id !== id);
+  if (l.pendingTransfers.length === before) return false;
+  save();
+  return true;
+}
+
+// Convalida un DDT pendente: esegue la lista di prelievo tramite applyMovementBatch (clamp/batchId/annullo-scheda
+// gratis) e rimuove il record dai pendenti. `qtyById` = quantità effettivamente consegnate (default = ordinate).
+// Il DDT di trasferimento diventa una scheda 'transfer' (fromWh→toWh); quello di uscita una scheda 'prelievo'
+// (esce da fromWh). La destinazione libera (destLabel) diventa il NOME della scheda (batchLabel), così resta
+// visibile su Schede e sul PDF. Ritorna la scheda applicata o null (niente da spostare / record assente).
+export function validatePendingTransfer(localeId, id, qtyById) {
+  const l = loc(localeId); if (!l) return null;
+  const rec = (l.pendingTransfers || []).find(r => r.id === id); if (!rec) return null;
+  const q = qtyById || {};
+  const lines = rec.lines
+    .map(ln => ({ productId: ln.productId, qty: q[ln.productId] != null ? (Math.floor(+q[ln.productId]) || 0) : ln.qty }))
+    .filter(x => x.qty > 0);
+  const isOut = rec.type === 'out';
+  const label = (rec.destLabel || '').trim();     // destinazione/causale → nome scheda
+  const note = (rec.note || '').trim();
+  const payload = isOut
+    ? { type: 'prelievo', fromWh: rec.fromWh, toWh: null, note, label, lines }
+    : { type: 'transfer', fromWh: rec.fromWh, toWh: rec.toWh, note, label, lines };
+  const scheda = applyMovementBatch(localeId, payload);
+  if (!scheda) return null;                        // giacenza insufficiente: il record resta pendente
+  l.pendingTransfers = (l.pendingTransfers || []).filter(r => r.id !== id);
+  save();
+  return scheda;
 }
 
 // ---- Gestione magazzini (mutazioni annidate nel locale) ----

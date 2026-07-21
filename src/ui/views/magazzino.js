@@ -14,6 +14,7 @@ import {
   pendingReceipts, receiveOrderSupplier, dismissReceiptSupplier,
   applyMovementBatch, applyInventoryBatch, schede, schedaById, renameScheda,
   deleteScheda, schedaDeletionPreview,
+  pendingTransfersOf, pendingTransfer, createPendingTransfer, cancelPendingTransfer, validatePendingTransfer,
 } from '../../domain/stock.js';
 import { generateMovementSlip, generateInventorySheet } from '../../domain/orderpdf.js';
 import { applyStockThresholds } from '../../domain/catalog.js';
@@ -33,6 +34,9 @@ const cWhMod = () => can('magazzini.modifica');
 const cWhDel = () => can('magazzini.elimina');
 const cWhManage = () => cWhCrea() || cWhMod() || cWhDel();   // apre la gestione magazzini
 const cMove = () => cIn() || cOut();                          // pulsanti carico/scarico in riga
+// DDT interni differiti (trasferimento magazzino→magazzino o uscita "fuori magazzino"): allineati ai
+// permessi dei movimenti — trasferimento richiede magazzino.trasferimento, l'uscita magazzino.scarico.
+const cDdt = () => cTransfer() || cOut();
 // rinomina scheda = scrittura sui movimenti: basta uno qualsiasi dei permessi di scrittura magazzino
 const cRename = () => cIn() || cOut() || cAdj() || cTransfer() || cBatch();
 // eliminare una scheda (storno) = poter creare schede: le schede nascono da Movimento massivo
@@ -97,10 +101,13 @@ export function render() {
   const whChip = (v, lbl) => `<button class="chip ${scope === v ? 'on' : ''}" data-scope="${v}">${esc(lbl)}</button>`;
   const nPend = pendingReceipts(lid).length;
   const pendBadge = nPend > 0 ? `<span class="badge" style="margin-left:6px;background:var(--accent)">${nPend}</span>` : '';
+  const nDdt = pendingTransfersOf(lid).length;
+  const ddtBadge = nDdt > 0 ? `<span class="badge" style="margin-left:6px;background:var(--accent)">${nDdt}</span>` : '';
   h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
     <div class="chips" style="margin:0">${whChip('all', 'Tutti i magazzini')}${whs.map(w => whChip(w.id, w.name)).join('')}</div>
     <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap">
       ${cReceive() ? `<button class="btn sm primary" data-receipts>📥 Carico da ordini${pendBadge}</button>` : ''}
+      ${cDdt() ? `<button class="btn sm" data-transfers>🚚 Trasferimenti${ddtBadge}</button>` : ''}
       ${cBatch() ? '<button class="btn sm" data-batch>⇅ Movimento massivo</button>' : ''}
       ${cAdj() ? '<button class="btn sm" data-inventory>📋 Inventario</button>' : ''}
       ${cThr() ? '<button class="btn sm" data-thresholds>🎯 Soglie scorta</button>' : ''}
@@ -658,6 +665,276 @@ function batchSheet(lid, after) {
   openSheet(render(), wire, { wide: true });
 }
 
+// ---- DDT interni differiti: trasferimenti/uscite DA CONSEGNARE ----
+// Flusso: si PREPARA il DDT (righe + stampa PDF) → resta in "Trasferimenti da consegnare" → alla consegna
+// si CONVALIDA (quantità effettive) e i movimenti entrano in scorte via applyMovementBatch (clamp/batchId gratis).
+
+// data breve del DDT per intestazioni
+function fmtDdtDate(rec) {
+  return new Date(rec.createdAt).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+// converte un record pendente nell'oggetto scheda atteso da generateMovementSlip (con marcatore pending).
+// out → scheda 'prelievo' (esce da fromWh; destLabel mostrata come destinazione "A"); transfer → 'transfer'.
+function pendingToScheda(rec) {
+  return {
+    type: rec.type === 'out' ? 'prelievo' : 'transfer',
+    fromWh: rec.fromWh, toWh: rec.toWh, label: '',
+    destLabel: (rec.destLabel || '').trim(), note: rec.note || '',
+    ts: rec.createdAt, date: '', pending: true,
+    lines: rec.lines.map(ln => ({ name: ln.name, format: ln.format, qty: ln.qty })),
+  };
+}
+
+// Sheet "Nuovo trasferimento": compone un DDT interno (trasferimento tra magazzini o uscita "fuori
+// magazzino"). Stessa impronta di batchSheet (chip operazione, rotta Da/A, ricerca + quantità, note),
+// ma NON applica: crea un record pendente e ne stampa il PDF. Nessun max sulle quantità (clamp alla convalida).
+function newTransferSheet(lid, after) {
+  const whs = warehousesOf(lid);
+  if (!whs.length) { toast('Nessun magazzino'); return; }
+  const canTransfer = cTransfer() && whs.length >= 2;
+  const canOut = cOut();
+  if (!canTransfer && !canOut) { toast('Servono almeno due magazzini per un trasferimento'); return; }
+  let type = canTransfer ? 'transfer' : 'out';           // transfer | out
+  let fromWh = (scope !== 'all' && whs.some(w => w.id === scope)) ? scope : whs[0].id;
+  let toWh = whs.find(w => w.id !== fromWh)?.id || fromWh;
+  let bq = '';                                           // ricerca prodotti
+  const qty = {};                                        // productId -> quantità
+  let searchDeb = null;
+  let noteVal = '', destVal = '';                        // preservati tra i ridisegni
+
+  // prodotti movimentabili: con giacenza in origine; per il trasferimento anche ammessi/già presenti a destinazione
+  const movableBase = () => {
+    if (type === 'transfer') return productsOf(lid).filter(p => stockOf(p, fromWh) > 0 && (warehouseAllowsProduct(lid, toWh, p) || stockOf(p, toWh) > 0));
+    return productsOf(lid).filter(p => stockOf(p, fromWh) > 0);
+  };
+
+  const render = () => {
+    const isTransfer = type === 'transfer';
+    let list = movableBase();
+    const term = bq.trim().toLowerCase();
+    if (term) list = list.filter(p => productMatches(p, term));
+
+    const typeChip = (v, lbl) => `<button class="chip ${type === v ? 'on' : ''}" data-ttype="${v}">${lbl}</button>`;
+    const opts = sel => whs.map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+    const toOpts = whs.filter(w => w.id !== fromWh).map(w => `<option value="${w.id}" ${w.id === toWh ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+    const route = isTransfer
+      ? `<div class="field"><label>Da</label><select id="t_from">${opts(fromWh)}</select></div>
+         <div class="field"><label>A</label><select id="t_to">${toOpts}</select></div>`
+      : `<div class="field"><label>Da</label><select id="t_from">${opts(fromWh)}</select></div>
+         <div class="field"><label>A</label><input value="Fuori magazzino" disabled></div>`;
+
+    const rows = list.length ? list.map(p => {
+      const av = stockOf(p, fromWh);   // niente max: si può preparare anche oltre la giacenza (clamp alla convalida)
+      return `<div class="row">
+        <div class="mid"><div class="t1">${esc(p.name)}${p.format ? ` <span class="badge soft" style="font-size:10px">${esc(p.format)}</span>` : ''}${codeTag(p.code)}</div>
+          <div class="t2 muted">disp. ${av}</div></div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <button class="btn sm" data-tminus="${esc(p.id)}" aria-label="Diminuisci">−</button>
+          <input class="tq" data-prod="${esc(p.id)}" type="number" min="0" inputmode="numeric" placeholder="0" value="${qty[p.id] ? esc(String(qty[p.id])) : ''}" style="width:52px;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg,var(--surface));color:var(--txt);font-weight:800" aria-label="Quantità">
+          <button class="btn sm primary" data-tplus="${esc(p.id)}" aria-label="Aumenta">+</button>
+        </div>
+      </div>`;
+    }).join('') : `<div class="card empty" style="padding:14px">${isTransfer ? 'Nessun prodotto trasferibile qui (categoria non ammessa a destinazione o senza giacenza in origine).' : 'Nessun prodotto con giacenza in questo magazzino.'}</div>`;
+
+    const nProd = Object.values(qty).filter(v => v > 0).length;
+    const pezzi = Object.values(qty).reduce((a, v) => a + (v > 0 ? v : 0), 0);
+    const destField = isTransfer ? '' : `<div class="field"><label>Destinazione / causale (facoltativo)</label><input id="t_dest" placeholder="Es. evento, reparto, destinatario"></div>`;
+    return `
+      <h2>🚚 Nuovo trasferimento</h2>
+      <div class="sheetsub">Prepara un DDT interno da consegnare: alla consegna lo convaliderai e la merce verrà spostata (o uscirà dalle scorte).</div>
+      <div class="field"><label>Operazione</label>
+        <div class="chips" style="margin:0">${canTransfer ? typeChip('transfer', 'Trasferimento') : ''}${canOut ? typeChip('out', 'Fuori magazzino') : ''}</div>
+      </div>
+      <div class="frow">${route}</div>
+      ${destField}
+      <div class="field"><input id="t_q" placeholder="Cerca prodotto…" value="${esc(bq)}"></div>
+      <div class="list" data-tlist>${rows}</div>
+      <div class="field" style="margin-top:10px"><label>Nota (opzionale)</label><input id="t_note" placeholder="${isTransfer ? 'Es. riassortimento sede' : 'Es. uso interno, evento'}"></div>
+      <div class="sheetsub" data-summary style="margin-top:6px">${nProd} prodott${nProd === 1 ? 'o' : 'i'} · ${pezzi} pz</div>
+      <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Prepara DDT</button></div>`;
+  };
+
+  const collect = sheet => sheet.querySelectorAll('.tq').forEach(inp => {
+    const v = parseInt(inp.value, 10) || 0;
+    if (v > 0) qty[inp.dataset.prod] = v; else delete qty[inp.dataset.prod];
+  });
+
+  const wire = sheet => {
+    const noteEl = sheet.querySelector('#t_note');
+    const destEl = sheet.querySelector('#t_dest');
+    if (noteEl) noteEl.value = noteVal;
+    if (destEl) destEl.value = destVal;
+    const redraw = restore => { searchDeb?.cancel(); collect(sheet); if (noteEl) noteVal = noteEl.value; if (destEl) destVal = destEl.value; openSheet(render(), s => { wire(s); restore && restore(s); }, { wide: true }); };
+
+    // Invio/scan in ricerca → prodotto bersaglio movimentabile → focus sulla sua quantità
+    const scanT = () => {
+      const base = movableBase();
+      const term = bq.trim().toLowerCase();
+      const visible = term ? base.filter(p => productMatches(p, term)) : base;
+      const target = scanTarget(bq, base, visible);
+      if (target) { redraw(s => { const inp = s.querySelector(`.tq[data-prod="${CSS.escape(target.id)}"]`); if (inp) { inp.focus(); try { inp.select(); } catch {} } else s.querySelector('#t_q')?.focus(); }); return; }
+      if (scanTarget(bq, productsOf(lid), [])) toast('Prodotto non disponibile per questa operazione');
+      redraw(s => s.querySelector('#t_q')?.focus());
+    };
+
+    sheet.querySelectorAll('[data-ttype]').forEach(b => b.onclick = () => {
+      type = b.dataset.ttype;
+      if (type === 'transfer' && (!toWh || toWh === fromWh)) toWh = whs.find(w => w.id !== fromWh)?.id || null;
+      redraw();
+    });
+    sheet.querySelector('#t_from')?.addEventListener('change', e => {
+      fromWh = e.target.value;
+      if (type === 'transfer' && toWh === fromWh) toWh = whs.find(w => w.id !== fromWh)?.id || null;
+      redraw();
+    });
+    sheet.querySelector('#t_to')?.addEventListener('change', e => { toWh = e.target.value; redraw(); });
+    const qi = sheet.querySelector('#t_q');
+    if (qi) {
+      const commit = () => { const pos = qi.selectionStart; redraw(s => { const nq = s.querySelector('#t_q'); if (nq) { nq.focus(); try { nq.setSelectionRange(pos, pos); } catch {} } }); };
+      searchDeb = debounce(commit, 130);
+      qi.oninput = () => { bq = qi.value; searchDeb(); };
+      qi.onkeydown = e => { if (e.key !== 'Enter') return; e.preventDefault(); bq = qi.value; searchDeb.cancel(); scanT(); };
+    }
+    if (noteEl) noteEl.oninput = () => { noteVal = noteEl.value; };
+    if (destEl) destEl.oninput = () => { destVal = destEl.value; };
+    const refreshSummary = () => {
+      collect(sheet);
+      const el = sheet.querySelector('[data-summary]'); if (!el) return;
+      const nProd = Object.values(qty).filter(v => v > 0).length;
+      const pezzi = Object.values(qty).reduce((a, v) => a + (v > 0 ? v : 0), 0);
+      el.textContent = `${nProd} prodott${nProd === 1 ? 'o' : 'i'} · ${pezzi} pz`;
+    };
+    const step = (pid, delta) => {
+      const inp = sheet.querySelector(`.tq[data-prod="${CSS.escape(pid)}"]`); if (!inp) return;
+      let v = (parseInt(inp.value, 10) || 0) + delta; if (v < 0) v = 0;
+      inp.value = v || ''; refreshSummary();
+    };
+    sheet.querySelectorAll('[data-tminus]').forEach(b => b.onclick = () => step(b.dataset.tminus, -1));
+    sheet.querySelectorAll('[data-tplus]').forEach(b => b.onclick = () => step(b.dataset.tplus, +1));
+    sheet.querySelectorAll('.tq').forEach(inp => {
+      inp.oninput = refreshSummary;
+      inp.onkeydown = e => {
+        if (e.key !== 'Enter') return; e.preventDefault(); collect(sheet);
+        const tqs = [...sheet.querySelectorAll('.tq')];
+        const i = tqs.indexOf(inp);
+        if (i >= 0 && i < tqs.length - 1) { tqs[i + 1].focus(); try { tqs[i + 1].select(); } catch {} }
+        else { bq = ''; redraw(s => s.querySelector('#t_q')?.focus()); }
+      };
+    });
+    sheet.querySelector('[data-cancel]').onclick = closeSheet;
+    sheet.querySelector('[data-ok]').onclick = () => {
+      collect(sheet);
+      if (noteEl) noteVal = noteEl.value;
+      if (destEl) destVal = destEl.value;
+      const lines = Object.entries(qty).filter(([, v]) => v > 0).map(([productId, v]) => ({ productId, qty: v }));
+      if (!lines.length) { toast('Inserisci almeno una quantità'); return; }
+      if (type === 'transfer' && (!toWh || toWh === fromWh)) { toast('Scegli un magazzino di destinazione diverso'); return; }
+      const rec = createPendingTransfer(lid, { type, fromWh, toWh: type === 'transfer' ? toWh : null, destLabel: type === 'out' ? destVal.trim() : '', note: noteVal.trim(), lines });
+      if (!rec) { toast('Niente da preparare'); return; }
+      closeSheet();
+      toast('DDT preparato · da consegnare ✓');
+      const pdf = generateMovementSlip(activeLocaleObj(), pendingToScheda(rec), warehousesOf(lid));
+      showPdfDownloadSheet([pdf]);
+      after && after();
+    };
+  };
+
+  openSheet(render(), wire, { wide: true });
+}
+
+// Sheet "Trasferimenti da consegnare": elenco dei DDT pendenti con rotta/data/righe e azioni per ciascuno
+// (ristampa PDF · convalida · annulla). Da qui si prepara anche un nuovo DDT.
+function transfersSheet(lid, after) {
+  const list = pendingTransfersOf(lid);
+  const body = !list.length
+    ? `<div class="card empty" style="padding:18px">Nessun trasferimento da consegnare.<br><span class="muted">Prepara un DDT interno per spostare merce tra magazzini o farla uscire dalle scorte.</span></div>`
+    : list.map(rec => {
+        const isOut = rec.type === 'out';
+        const pezzi = rec.lines.reduce((a, ln) => a + (ln.qty || 0), 0);
+        const route = isOut
+          ? `${esc(warehouseName(lid, rec.fromWh))} → <span class="muted">${esc((rec.destLabel || '').trim() || 'fuori magazzino')}</span>`
+          : `${esc(warehouseName(lid, rec.fromWh))} → ${esc(warehouseName(lid, rec.toWh))}`;
+        return `<div class="card" style="margin-bottom:12px">
+          <div class="section-title" style="margin-top:0">${isOut ? '⬇️' : '↔️'} ${route} <span class="muted" style="font-weight:500;font-size:12px">· ${fmtDdtDate(rec)} · ${rec.lines.length} rig${rec.lines.length === 1 ? 'a' : 'he'} · ${pezzi} pz</span></div>
+          ${rec.note ? `<div class="muted" style="font-size:12.5px;margin:-4px 2px 8px">${esc(rec.note)}</div>` : ''}
+          <div class="btnrow" style="margin-top:4px">
+            <button class="btn sm" data-tprint="${esc(rec.id)}">🖨️ Ristampa</button>
+            <button class="btn sm primary" data-tok="${esc(rec.id)}">✅ Convalida</button>
+            <button class="btn sm danger" data-tdel="${esc(rec.id)}">🗑️ Annulla</button>
+          </div>
+        </div>`;
+      }).join('');
+
+  openSheet(`
+    <h2>🚚 Trasferimenti da consegnare</h2>
+    <div class="sheetsub">DDT interni preparati e in attesa di consegna. Alla consegna convalida le quantità: la merce viene spostata (o esce dalle scorte).</div>
+    ${cDdt() ? '<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-tnew>+ Nuovo trasferimento</button></div>' : ''}
+    <div data-transfers-body>${body}</div>
+    <div class="actions"><button class="btn primary" data-close>Chiudi</button></div>`,
+    sheet => {
+      const rebuild = () => { closeSheet(); transfersSheet(lid, after); };
+      sheet.querySelector('[data-close]').onclick = () => { closeSheet(); after && after(); };
+      sheet.querySelector('[data-tnew]')?.addEventListener('click', () => { closeSheet(); newTransferSheet(lid, () => transfersSheet(lid, after)); });
+      sheet.querySelectorAll('[data-tprint]').forEach(b => b.onclick = () => {
+        const rec = pendingTransfer(lid, b.dataset.tprint); if (!rec) return;
+        const pdf = generateMovementSlip(activeLocaleObj(), pendingToScheda(rec), warehousesOf(lid));
+        showPdfDownloadSheet([pdf]);
+      });
+      sheet.querySelectorAll('[data-tok]').forEach(b => b.onclick = () => {
+        const rec = pendingTransfer(lid, b.dataset.tok); if (rec) validateTransferSheet(lid, rec, rebuild);
+      });
+      sheet.querySelectorAll('[data-tdel]').forEach(b => b.onclick = () => {
+        const rec = pendingTransfer(lid, b.dataset.tdel); if (!rec) return;
+        const isOut = rec.type === 'out';
+        const dest = isOut ? ((rec.destLabel || '').trim() || 'fuori magazzino') : warehouseName(lid, rec.toWh);
+        confirmDialog('Annullare il trasferimento?', `${warehouseName(lid, rec.fromWh)} → ${dest} · ${fmtDdtDate(rec)} — il DDT sparisce dall'elenco senza muovere nulla.`, 'Annulla DDT', () => {
+          cancelPendingTransfer(lid, rec.id);
+          toast('Trasferimento annullato');
+          rebuild();
+        }, { danger: true });
+      });
+    }, { wide: true });
+}
+
+// Sheet di convalida: mostra la lista di prelievo con quantità MODIFICABILI (default = preparate). All'ok
+// esegue via validatePendingTransfer (movimenti reali, clamp al disponibile) e rimuove il DDT dai pendenti.
+function validateTransferSheet(lid, rec, after) {
+  const isOut = rec.type === 'out';
+  const dest = isOut ? ((rec.destLabel || '').trim() || 'Fuori magazzino') : warehouseName(lid, rec.toWh);
+  const rows = rec.lines.map(ln => {
+    const av = stockOf(product(ln.productId), rec.fromWh);
+    return `<div class="row">
+      <div class="mid"><div class="t1">${esc(ln.name)}${ln.format ? ` <span class="badge soft" style="font-size:10px">${esc(ln.format)}</span>` : ''}</div>
+        <div class="t2 muted">disp. ${av} in ${esc(warehouseName(lid, rec.fromWh))}${ln.qty > av ? ' · <span style="color:var(--orange,#b08a4e)">oltre giacenza</span>' : ''}</div></div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+        <button class="btn sm" data-vminus data-prod="${esc(ln.productId)}" aria-label="Diminuisci">−</button>
+        <input class="vq" data-prod="${esc(ln.productId)}" type="number" min="0" inputmode="numeric" value="${ln.qty}" style="width:52px;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg,var(--surface));color:var(--txt);font-weight:800" aria-label="Quantità consegnata">
+        <button class="btn sm primary" data-vplus data-prod="${esc(ln.productId)}" aria-label="Aumenta">+</button>
+      </div>
+    </div>`;
+  }).join('');
+  openSheet(`
+    <h2>✅ Convalida consegna</h2>
+    <div class="sheetsub">${esc(warehouseName(lid, rec.fromWh))} → ${esc(dest)} · conferma le quantità effettivamente consegnate.</div>
+    <div class="list">${rows}</div>
+    <div class="actions"><button class="btn" data-cancel>Annulla</button><button class="btn primary" data-ok>Convalida ed esegui</button></div>`,
+    sheet => {
+      const step = (btn, delta) => { const inp = sheet.querySelector(`.vq[data-prod="${CSS.escape(btn.dataset.prod)}"]`); if (!inp) return; let v = (parseInt(inp.value, 10) || 0) + delta; if (v < 0) v = 0; inp.value = v; };
+      sheet.querySelectorAll('[data-vminus]').forEach(b => b.onclick = () => step(b, -1));
+      sheet.querySelectorAll('[data-vplus]').forEach(b => b.onclick = () => step(b, +1));
+      sheet.querySelector('[data-cancel]').onclick = () => { closeSheet(); after && after(); };
+      sheet.querySelector('[data-ok]').onclick = () => {
+        const qtyById = {};
+        sheet.querySelectorAll('.vq').forEach(inp => { qtyById[inp.dataset.prod] = parseInt(inp.value, 10) || 0; });
+        const scheda = validatePendingTransfer(lid, rec.id, qtyById);
+        closeSheet();
+        if (!scheda) { toast(isOut ? 'Niente da far uscire (giacenza insufficiente)' : 'Niente da trasferire (giacenza insufficiente)'); }
+        else toast(isOut ? 'Uscita registrata ✓' : 'Trasferimento eseguito ✓');
+        after && after();
+      };
+    }, { wide: true });
+}
+
 // ---- Barra filtri prodotti condivisa (sezioni Soglie e Inventario) ----
 // Stato `f` = { q, cat, sub, sup }: ricerca nome + categoria › sottocategoria + fornitore. Le funzioni
 // normalizzano lo stato, filtrano una lista, producono la barra e ne cablano gli eventi, così le due
@@ -1153,6 +1430,7 @@ export function bind(root) {
   const rerender = () => { root.innerHTML = render(); bind(root); };
   root.querySelectorAll('[data-scope]').forEach(b => b.onclick = () => { scope = b.dataset.scope; rerender(); });
   root.querySelector('[data-receipts]')?.addEventListener('click', () => receiptsSheet(lid, rerender));
+  root.querySelector('[data-transfers]')?.addEventListener('click', () => transfersSheet(lid, rerender));
   root.querySelector('[data-batch]')?.addEventListener('click', () => batchSheet(lid, rerender));
   root.querySelector('[data-inventory]')?.addEventListener('click', () => {
     const whs = warehousesOf(lid);

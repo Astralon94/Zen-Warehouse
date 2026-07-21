@@ -29,6 +29,12 @@ const sample = {
     ],
     supplierNotes: { 'sup1': 'Consegnare entro le 10', '__none__': 'Nota generica' },
     currentOrder: { 'prod2': 3 },
+    // DDT interni differiti DA CONSEGNARE annidati nel doc del locale (come currentOrder/supplierNotes):
+    // un trasferimento wh1→wh2 e un'uscita "fuori magazzino" (destLabel), entrambi in attesa di convalida.
+    pendingTransfers: [
+      { id: 'pt1', createdAt: 1720000200000, type: 'transfer', fromWh: 'wh1', toWh: 'wh2', destLabel: '', note: 'riassortimento', status: 'pending', lines: [{ productId: 'prod1', name: 'Barolo DOCG', format: 'Bt', qty: 2 }] },
+      { id: 'pt2', createdAt: 1720000300000, type: 'out', fromWh: 'wh1', toWh: null, destLabel: 'Evento sala', note: '', status: 'pending', lines: [{ productId: 'prod3', name: 'Sale', format: 'Cf', qty: 1 }] },
+    ],
   }],
   suppliers: [
     { id: 'sup1', localeId: 'loc1', name: 'Cantina Rossi', contact: 'Luca', phone: '333-1', email: 'l@r.it', address: 'Via A 2', note: '', order: 0 },
@@ -76,6 +82,9 @@ assert.deepEqual(l.warehouses.find(w => w.id === 'wh2').typeIds, ['ty-food'], 'c
 assert.equal(l.deliveryPoints[0].address, 'Via Roma 1', 'deliveryPoint annidato preservato');
 assert.equal(l.supplierNotes.sup1, 'Consegnare entro le 10', 'supplierNotes annidate preservate');
 assert.equal(l.currentOrder.prod2, 3, 'currentOrder annidato preservato');
+assert.equal(l.pendingTransfers.length, 2, 'pendingTransfers (DDT interni differiti) annidati preservati');
+assert.equal(l.pendingTransfers.find(r => r.id === 'pt2').destLabel, 'Evento sala', 'destinazione libera dell\'uscita "fuori magazzino" preservata');
+assert.equal(l.pendingTransfers.find(r => r.id === 'pt1').lines[0].name, 'Barolo DOCG', 'snapshot nome riga del DDT preservato');
 assert.deepEqual(out1.products.find(p => p.id === 'prod1').stockByWh, { wh1: 8, wh2: 4 }, 'stockByWh per magazzino preservato');
 assert.equal(out1.products.find(p => p.id === 'prod1').targetStock, 12, 'targetStock (scorta target) preservato');
 assert.equal(out1.products.find(p => p.id === 'prod1').priceHistory.length, 2, 'priceHistory (storico prezzi) preservato');

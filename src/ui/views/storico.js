@@ -91,12 +91,12 @@ function openOrder(id) {
 
   openSheet(`
     <h2>Ordine del ${fmtDateTime(o.sentAt || o.createdAt).replace(' · ', ' alle ')}</h2>
-    <div class="sheetsub">${s.righe} righe · ${s.pezzi} pezzi · ${s.fornitori} fornitor${s.fornitori === 1 ? 'e' : 'i'}${dp ? ' · 📍 ' + esc(dp) : ''}${o.status === 'received' ? ' · <b style="color:var(--green,#6b8f80)">✓ ricevuto</b>' : o.status === 'closed' ? ' · <b class="muted">evaso</b>' : ''}</div>
+    <div class="sheetsub">${s.righe} righe · ${s.pezzi} pezzi · ${s.fornitori} fornitor${s.fornitori === 1 ? 'e' : 'i'}${dp ? ' · 📍 ' + esc(dp) : ''}${o.stockLoad === false ? ' · <span class="muted">senza carico magazzino</span>' : o.status === 'received' ? ' · <b style="color:var(--green,#6b8f80)">✓ ricevuto</b>' : o.status === 'closed' ? ' · <b class="muted">evaso</b>' : ''}</div>
     ${groupsHtml}
     <div class="btnrow" style="margin-top:14px">
       <button class="btn primary" data-reprint>⤓ Rigenera PDF</button>
       ${can('ordini.riordina') ? '<button class="btn" data-reorder>↻ Ri-ordina</button>' : ''}
-      ${(o.status === 'received' || o.status === 'closed' || !can('magazzino.ricevi')) ? '' : '<button class="btn" data-receive>📥 Ricevi (carico)</button>'}
+      ${(o.status === 'received' || o.status === 'closed' || o.stockLoad === false || !can('magazzino.ricevi')) ? '' : '<button class="btn" data-receive>📥 Ricevi (carico)</button>'}
       ${can('ordini.elimina') ? '<button class="btn danger" data-del>Elimina</button>' : ''}
     </div>`,
     sheet => {
