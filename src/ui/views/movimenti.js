@@ -43,9 +43,10 @@ function fmtDateTime(ts) {
 const fmtDate = ts => new Date(ts).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
 const dpName = (lid, id) => (deliveryPointsOf(lid).find(d => d.id === id)?.name || null);
 
-// tipo di un movimento SINGOLO dal suo kind (le rettifiche via setStock usano kind in/out, come mostrava
-// la vecchia scheda prodotto: restano quindi carico/prelievo — il badge 🧮 Rettifica resta agli inventari batch)
-const moveType = m => m.kind === 'transfer' ? 'transfer' : m.kind === 'in' ? 'carico' : 'prelievo';
+// tipo di un movimento SINGOLO: le rettifiche via setStock portano il marcatore `batchType:'rettifica'`
+// (senza batchId → schede() le ignora) e diventano 🧮 Rettifica; le altre si leggono dal kind. Le rettifiche
+// singole FATTE PRIMA dell'introduzione del marcatore restano carico/prelievo (limite accettabile).
+const moveType = m => m.batchType === 'rettifica' ? 'rettifica' : m.kind === 'transfer' ? 'transfer' : m.kind === 'in' ? 'carico' : 'prelievo';
 const moveName = m => m.name || product(m.productId)?.name || '—';
 const moveCode = m => product(m.productId)?.code || '';
 
@@ -82,14 +83,18 @@ function entryRow(lid, e, canDel) {
     </div>`;
   }
   if (e.kind === 'move') {
-    const m = e.m;
-    const route = m.kind === 'transfer' ? `${esc(warehouseName(lid, m.fromWarehouseId))} → ${esc(warehouseName(lid, m.warehouseId))}`
+    const m = e.m, mt = moveType(m);
+    const route = mt === 'rettifica' ? esc(warehouseName(lid, m.warehouseId))
+      : m.kind === 'transfer' ? `${esc(warehouseName(lid, m.fromWarehouseId))} → ${esc(warehouseName(lid, m.warehouseId))}`
       : m.kind === 'in' ? `<span class="muted">esterno</span> → ${esc(warehouseName(lid, m.warehouseId))}`
       : `${esc(warehouseName(lid, m.warehouseId))} → <span class="muted">fuori magazzino</span>`;
+    // rettifica: mostra il prima→dopo se disponibile (la nota default "Rettifica" è ridondante col badge)
+    const note = (m.note || '').trim(); const showNote = note && note !== 'Rettifica';
+    const measure = mt === 'rettifica' && m.before != null && m.after != null ? `${m.before} → ${m.after}` : `${m.qty} pz`;
     return `<div class="row click" data-move="${esc(m.id)}">
-      <div class="emoji">${m.kind === 'transfer' ? TYPE_META.transfer.emoji : m.kind === 'in' ? TYPE_META.carico.emoji : TYPE_META.prelievo.emoji}</div>
-      <div class="mid"><div class="t1">${typeBadge(moveType(m))} ${esc(moveName(m))}${codeTag(moveCode(m))} <span class="muted" style="font-weight:500;font-size:12px">· ${esc(fmtDate(m.ts) || m.date)}</span></div>
-        <div class="t2">${route} · ${m.qty} pz${(m.note || '').trim() ? ' · ' + esc(m.note.trim()) : ''}</div></div>
+      <div class="emoji">${(TYPE_META[mt] || TYPE_META.carico).emoji}</div>
+      <div class="mid"><div class="t1">${typeBadge(mt)} ${esc(moveName(m))}${codeTag(moveCode(m))} <span class="muted" style="font-weight:500;font-size:12px">· ${esc(fmtDate(m.ts) || m.date)}</span></div>
+        <div class="t2">${route} · ${measure}${showNote ? ' · ' + esc(note) : ''}</div></div>
     </div>`;
   }
   const s = e.s;
@@ -234,16 +239,23 @@ function openMove(id) {
   const lid = activeLocale();
   const m = singleMoves(lid).find(x => x.id === id);
   if (!m) { toast('Movimento non trovato'); return; }
-  const meta = TYPE_META[moveType(m)] || TYPE_META.carico;
-  const route = m.kind === 'transfer' ? `${esc(warehouseName(lid, m.fromWarehouseId))} → ${esc(warehouseName(lid, m.warehouseId))}`
+  const mt = moveType(m);
+  const meta = TYPE_META[mt] || TYPE_META.carico;
+  const isRett = mt === 'rettifica';
+  const route = isRett ? esc(warehouseName(lid, m.warehouseId))
+    : m.kind === 'transfer' ? `${esc(warehouseName(lid, m.fromWarehouseId))} → ${esc(warehouseName(lid, m.warehouseId))}`
     : m.kind === 'in' ? `<span class="muted">esterno / fornitore</span> → ${esc(warehouseName(lid, m.warehouseId))}`
     : `${esc(warehouseName(lid, m.warehouseId))} → <span class="muted">fuori magazzino</span>`;
+  const note = (m.note || '').trim(); const showNote = note && !(isRett && note === 'Rettifica');
+  const amt = isRett && m.before != null && m.after != null
+    ? `<span class="tnum" style="font-weight:800">${m.before} → ${m.after}</span>`
+    : `<span class="amt tnum" style="font-weight:800">${m.qty}</span>`;
   openSheet(`
     <h2>${meta.emoji} ${meta.label} · ${esc(moveName(m))}${codeTag(moveCode(m))}</h2>
     <div class="sheetsub">${esc(fmtDate(m.ts) || m.date)} · ${route}</div>
     <div class="list"><div class="row">
-      <div class="mid"><div class="t1">${esc(moveName(m))}</div>${(m.note || '').trim() ? `<div class="t2">${esc(m.note.trim())}</div>` : ''}</div>
-      <div class="amt tnum" style="font-weight:800">${m.qty}</div>
+      <div class="mid"><div class="t1">${esc(moveName(m))}</div>${showNote ? `<div class="t2">${esc(note)}</div>` : ''}</div>
+      ${amt}
     </div></div>
     <div class="muted" style="font-size:12px;margin-top:10px">Movimento singolo (bottone rapido della riga prodotto). Per lo storno di gruppo usa le schede multi-prodotto.</div>
     <div class="actions"><button class="btn primary" data-close>Chiudi</button></div>`,

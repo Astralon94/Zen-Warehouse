@@ -226,11 +226,20 @@ export function generateMovementSlip(locale, scheda, warehouses) {
   // per la rettifica mostriamo il segno del delta (+ aumento / − diminuzione)
   const qtyStr = it => isRettifica ? ((it.delta != null ? (it.delta < 0) : (it.kind === 'out')) ? '−' + it.qty : '+' + it.qty) : String(it.qty);
   (scheda.lines || []).forEach(it => {
+    const code = (it.code || '').trim();
     doc.setFontSize(9.5); const lines = doc.splitTextToSize(it.name, 118);
     doc.text(lines, ml, y); doc.setFontSize(9); doc.text(it.format || '—', 145, y);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(qtyStr(it), mr, y, { align: 'right' });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    y += lines.length > 1 ? lines.length * 5 + 1 : 6.5;
+    let rowH = lines.length > 1 ? lines.length * 5 + 1 : 6.5;
+    if (code) {
+      // sotto-riga sobria col codice, in grigio più piccolo (coerente col PDF ordine)
+      doc.setFontSize(7.5); doc.setTextColor(120, 120, 120);
+      doc.text('Cod. ' + code, ml, y + lines.length * 5 - 1.5);
+      doc.setTextColor(15, 23, 42); doc.setFontSize(9);
+      rowH = Math.max(rowH, lines.length * 5 + 2.5);
+    }
+    y += rowH;
     doc.setDrawColor(245, 245, 245); doc.line(ml, y - 1.5, mr, y - 1.5); doc.setDrawColor(229, 231, 235);
     if (y > maxY) { doc.addPage(); y = 20; }
   });
@@ -306,13 +315,22 @@ export function generateInventorySheet(locale, warehouse, products) {
 
   const maxY = pageH - 24;
   (products || []).forEach(it => {
+    const code = (it.code || '').trim();
     doc.setFontSize(9.5); const lines = doc.splitTextToSize(it.name, colFmt - ml - 4);
     doc.text(lines, ml, y); doc.setFontSize(9); doc.text(it.format || '—', colFmt, y);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(String(it.stock), colCur, y, { align: 'right' });
     // casella vuota per la conta manuale
     doc.setDrawColor(180, 180, 180); doc.setLineWidth(0.4); doc.roundedRect(colCount - 22, y - 4, 22, 6.5, 1, 1, 'S');
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    y += lines.length > 1 ? lines.length * 5 + 1 : 7.5;
+    let rowH = lines.length > 1 ? lines.length * 5 + 1 : 7.5;
+    if (code) {
+      // sotto-riga sobria col codice, in grigio più piccolo (coerente con schede e PDF ordine)
+      doc.setFontSize(7.5); doc.setTextColor(120, 120, 120);
+      doc.text('Cod. ' + code, ml, y + lines.length * 5 - 1.5);
+      doc.setTextColor(15, 23, 42); doc.setFontSize(9);
+      rowH = Math.max(rowH, lines.length * 5 + 3);
+    }
+    y += rowH;
     doc.setDrawColor(245, 245, 245); doc.line(ml, y - 2, mr, y - 2); doc.setDrawColor(229, 231, 235);
     if (y > maxY) { doc.addPage(); y = 20; header(); }
   });

@@ -38,10 +38,13 @@ export function stockOut(localeId, productId, whId, qty, note) {
 export function setStock(localeId, productId, whId, target, note) {
   target = Math.max(0, Math.floor(+target) || 0);
   const p = product(productId); if (!p || !whId) return;
-  const delta = target - cur(p, whId);
+  const before = cur(p, whId);
+  const delta = target - before;
   if (delta === 0) return;
   setWh(p, whId, target);
-  addMove(localeId, productId, whId, Math.abs(delta), delta > 0 ? 'in' : 'out', note || 'Rettifica');
+  // marcatore `batchType:'rettifica'` SENZA batchId: schede() lo ignora (niente false schede),
+  // ma la vista Movimenti lo riconosce come Rettifica. before/after per mostrare il prima→dopo.
+  addMove(localeId, productId, whId, Math.abs(delta), delta > 0 ? 'in' : 'out', note || 'Rettifica', null, { batchType: 'rettifica', before, after: target });
   save();
 }
 // trasferimento: sposta quantità da un magazzino all'altro (clamp al disponibile in origine)
@@ -100,7 +103,7 @@ export function applyMovementBatch(localeId, { type, fromWh, toWh, note, label, 
       // carico: entrata merce da esterno, nessun clamp (la giacenza sale)
       setWh(p, toWh, cur(p, toWh) + want);
       addMove(localeId, p.id, toWh, want, 'in', note, null, extra);
-      out.push({ productId: p.id, name: p.name, format: p.format || '', qty: want });
+      out.push({ productId: p.id, name: p.name, code: p.code || '', format: p.format || '', qty: want });
       return;
     }
     const eff = Math.min(want, cur(p, fromWh)); if (eff <= 0) return; // clamp al disponibile in origine
@@ -112,7 +115,7 @@ export function applyMovementBatch(localeId, { type, fromWh, toWh, note, label, 
       setWh(p, fromWh, cur(p, fromWh) - eff);
       addMove(localeId, p.id, fromWh, eff, 'out', note, null, extra);
     }
-    out.push({ productId: p.id, name: p.name, format: p.format || '', qty: eff });
+    out.push({ productId: p.id, name: p.name, code: p.code || '', format: p.format || '', qty: eff });
   });
   if (!out.length) return null;
   save();
@@ -141,7 +144,7 @@ export function applyInventoryBatch(localeId, whId, counts, label) {
     setWh(p, whId, target);
     const kind = delta > 0 ? 'in' : 'out';
     addMove(localeId, p.id, whId, Math.abs(delta), kind, '', null, { batchId, batchType: 'rettifica', batchLabel: label, name: p.name, before, after: target });
-    out.push({ productId: p.id, name: p.name, format: p.format || '', qty: Math.abs(delta), delta, before, after: target });
+    out.push({ productId: p.id, name: p.name, code: p.code || '', format: p.format || '', qty: Math.abs(delta), delta, before, after: target });
   });
   if (!out.length) return null;
   save();
@@ -391,7 +394,7 @@ export function createPendingTransfer(localeId, { type, fromWh, toWh, destLabel,
   (lines || []).forEach(ln => {
     const p = product(ln.productId); if (!p) return;
     const qty = Math.floor(+ln.qty) || 0; if (qty <= 0) return;
-    out.push({ productId: p.id, name: p.name, format: p.format || '', qty });
+    out.push({ productId: p.id, name: p.name, code: p.code || '', format: p.format || '', qty });
   });
   if (!out.length) return null;
   if (!Array.isArray(l.pendingTransfers)) l.pendingTransfers = [];

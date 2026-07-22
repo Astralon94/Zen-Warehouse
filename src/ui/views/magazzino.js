@@ -682,7 +682,9 @@ function pendingToScheda(rec) {
     fromWh: rec.fromWh, toWh: rec.toWh, label: '',
     destLabel: (rec.destLabel || '').trim(), note: rec.note || '',
     ts: rec.createdAt, date: '', pending: true,
-    lines: rec.lines.map(ln => ({ name: ln.name, format: ln.format, qty: ln.qty })),
+    // code: dallo snapshot della riga o, per i pendenti creati prima dell'aggiunta del campo,
+    // risolto al volo dal prodotto (prodotto sparito → codice vuoto, senza errori).
+    lines: rec.lines.map(ln => ({ name: ln.name, code: ln.code || product(ln.productId)?.code || '', format: ln.format, qty: ln.qty })),
   };
 }
 
@@ -1115,7 +1117,7 @@ function bindInventory(root) {
     };
   });
   root.querySelector('[data-print]').onclick = () => {
-    const prods = invBase(lid, invWh).map(p => ({ name: p.name, format: p.format || '', stock: stockOf(p, invWh) }));
+    const prods = invBase(lid, invWh).map(p => ({ name: p.name, code: p.code || '', format: p.format || '', stock: stockOf(p, invWh) }));
     const pdf = generateInventorySheet(activeLocaleObj(), warehouse(lid, invWh), prods);
     showPdfDownloadSheet([pdf]);
   };
