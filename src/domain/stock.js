@@ -62,6 +62,13 @@ export function movesForProduct(productId) {
   return data.stockMoves.filter(m => m.productId === productId).slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
 }
 
+// movimenti SINGOLI del locale (senza batchId): carichi/scarichi/rettifiche/trasferimenti fatti dai bottoni
+// rapidi della riga prodotto (o dalla ricezione ordine). Le schede multi-prodotto, che hanno un `batchId`,
+// sono ricostruite a parte da schede(): qui restano fuori per non duplicarle. Dal più recente.
+export function singleMoves(localeId) {
+  return data.stockMoves.filter(m => m.localeId === localeId && !m.batchId).slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+}
+
 // ---- Schede di movimento (DDT interno): carichi/prelievi/trasferimenti MULTI-prodotto ----
 // Una "scheda" è DERIVATA: raggruppa i movimenti che condividono un `batchId` nel loro doc.
 // Nessuna collezione/schema nuovo: i campi extra (`batchId`,`batchType`,`note`,`name`) vivono nel

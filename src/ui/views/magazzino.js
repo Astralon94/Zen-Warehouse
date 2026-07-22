@@ -47,18 +47,9 @@ let q = '';
 let filter = 'all';    // all | low | out
 let scope = 'all';     // 'all' (totale) | warehouseId
 
-// ---- Visuale Schede (modalità dedicata della vista Magazzino) ----
-// Stato dei filtri in memoria di vista (non persistito): si azzera solo con "Azzera".
-const SCHEDE_STEP = 50;                         // schede mostrate per volta (rendering incrementale)
-const SCHEDE_PERIODS = [['all', 'Tutto'], ['7', 'Ultimi 7 giorni'], ['30', 'Ultimo mese'], ['90', 'Ultimi 3 mesi']];
-let mode = 'stock';                             // 'stock' (giacenze) | 'schede' | 'thresholds' | 'inventory'
-let sq = '';                                    // ricerca schede: prodotto nelle righe o nota
-let sTipo = 'all';                              // all | carico | prelievo | transfer
-let sWh = 'all';                                // all | warehouseId (coinvolto come origine O destinazione)
-let sPeriod = 'all';                            // all | 7 | 30 | 90 (giorni)
-let schedeShown = SCHEDE_STEP;                  // quante schede sono visibili ora
-// timestamp minimo per il filtro periodo (0 = nessun limite)
-const periodCutoff = v => v === 'all' ? 0 : Date.now() - (+v) * 86400000;
+// Modalità della vista Magazzino: giacenze (default), sezioni a tutta pagina Soglie e Inventario.
+// La consultazione delle schede di movimento vive ora nella sezione Movimenti.
+let mode = 'stock';                             // 'stock' (giacenze) | 'thresholds' | 'inventory'
 
 // ---- Stato delle sezioni dedicate "Soglie di scorta" e "Inventario" (a tutta pagina) ----
 // Vive in memoria di vista come lo stato Schede: sopravvive ai redraw interni, si azzera all'ingresso.
@@ -87,7 +78,6 @@ const badge = p => {
 export function render() {
   const l = activeLocaleObj();
   if (!l) return `<div class="pagehead"><h1>Magazzino</h1></div><div class="card"><div class="empty">Crea un locale dalle Impostazioni.</div></div>`;
-  if (mode === 'schede') return renderSchede(activeLocale(), l);
   if (mode === 'thresholds') return renderThresholds(activeLocale(), l);
   if (mode === 'inventory') return renderInventory(activeLocale(), l);
   const lid = activeLocale();
@@ -103,16 +93,27 @@ export function render() {
   const pendBadge = nPend > 0 ? `<span class="badge" style="margin-left:6px;background:var(--accent)">${nPend}</span>` : '';
   const nDdt = pendingTransfersOf(lid).length;
   const ddtBadge = nDdt > 0 ? `<span class="badge" style="margin-left:6px;background:var(--accent)">${nDdt}</span>` : '';
+  // Toolbar: a sinistra i magazzini, a destra i bottoni OPERATIVI (carico da ordini, trasferimenti) e
+  // una tendina "Impostazioni" con le voci di configurazione/riordino interno (massivo, inventario,
+  // soglie, gestisci magazzini). La consultazione delle schede è nella sezione Movimenti.
+  const cfgItems = [
+    cBatch() ? '<button data-batch><span class="ic">⇅</span>Movimento massivo</button>' : '',
+    cAdj() ? '<button data-inventory><span class="ic">📋</span>Inventario</button>' : '',
+    cThr() ? '<button data-thresholds><span class="ic">🎯</span>Soglie scorta</button>' : '',
+    cWhManage() ? '<button data-managewh><span class="ic">⚙︎</span>Gestisci magazzini</button>' : '',
+  ].filter(Boolean).join('');
+  const cfgMenu = cfgItems
+    ? `<div class="navwrap" style="flex-shrink:0">
+        <button class="btn sm" id="magCfgToggle">⚙️ Impostazioni <span style="opacity:.6">▾</span></button>
+        <div class="navmenu" id="magCfgMenu" style="right:0;left:auto">${cfgItems}</div>
+      </div>`
+    : '';
   h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
     <div class="chips" style="margin:0">${whChip('all', 'Tutti i magazzini')}${whs.map(w => whChip(w.id, w.name)).join('')}</div>
-    <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap">
+    <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;align-items:center">
       ${cReceive() ? `<button class="btn sm primary" data-receipts>📥 Carico da ordini${pendBadge}</button>` : ''}
       ${cDdt() ? `<button class="btn sm" data-transfers>🚚 Trasferimenti${ddtBadge}</button>` : ''}
-      ${cBatch() ? '<button class="btn sm" data-batch>⇅ Movimento massivo</button>' : ''}
-      ${cAdj() ? '<button class="btn sm" data-inventory>📋 Inventario</button>' : ''}
-      ${cThr() ? '<button class="btn sm" data-thresholds>🎯 Soglie scorta</button>' : ''}
-      <button class="btn sm" data-schede>🧾 Schede</button>
-      ${cWhManage() ? '<button class="btn sm" data-managewh>⚙︎ Gestisci magazzini</button>' : ''}
+      ${cfgMenu}
     </div>
   </div>`;
 
@@ -1223,102 +1224,13 @@ function bindThresholds(root) {
   };
 }
 
-// ---- Storico schede di movimento (consultazione + ristampa) ----
+// ---- Dettaglio scheda di movimento (consultazione + ristampa + storno) ----
+// Riusati dalla sezione Movimenti (la LISTA delle schede vive lì): esportati qui perché tutti i loro
+// helper (fmtSchedaDate, renameSchedaModal, guardie, ecc.) sono interni a questa vista.
 function fmtSchedaDate(s) {
   return s.ts ? new Date(s.ts).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' }) : (s.date || '');
 }
-// riga-scheda per la lista (riusata dalla visuale dedicata). `canDel` mostra l'azione Elimina in riga.
-function schedaRow(lid, s, canDel) {
-  const pezzi = s.lines.reduce((a, ln) => a + (ln.qty || 0), 0);
-  const route = s.type === 'transfer'
-    ? `${esc(warehouseName(lid, s.fromWh))} → ${esc(warehouseName(lid, s.toWh))}`
-    : s.type === 'carico'
-      ? `<span class="muted">esterno</span> → ${esc(warehouseName(lid, s.toWh))}`
-      : s.type === 'rettifica'
-        ? esc(warehouseName(lid, s.toWh))
-        : `${esc(warehouseName(lid, s.fromWh))} → <span class="muted">fuori magazzino</span>`;
-  const emoji = s.type === 'transfer' ? '↔️' : s.type === 'carico' ? '⬆️' : s.type === 'rettifica' ? '📋' : '⬇️';
-  const typeLabel = s.type === 'transfer' ? 'Trasferimento' : s.type === 'carico' ? 'Carico' : s.type === 'rettifica' ? 'Rettifica' : 'Prelievo';
-  const name = (s.label || '').trim() ? ` · <b>${esc(s.label.trim())}</b>` : '';
-  return `<div class="row click" data-scheda="${esc(s.batchId)}">
-    <div class="emoji">${emoji}</div>
-    <div class="mid"><div class="t1">${typeLabel}${name} <span class="muted" style="font-weight:500;font-size:12px">· ${esc(fmtSchedaDate(s))}</span></div>
-      <div class="t2">${route} · ${s.lines.length} rig${s.lines.length === 1 ? 'a' : 'he'} · ${pezzi} pz</div></div>
-    ${canDel ? `<button class="btn-icon" data-schedadel="${esc(s.batchId)}" title="Elimina scheda" aria-label="Elimina scheda" style="color:var(--red);flex-shrink:0">🗑</button>` : ''}
-  </div>`;
-}
-
-// Visuale dedicata "Schede di movimento": ricerca, filtri rapidi (tipo/magazzino/periodo in AND)
-// e rendering incrementale (mai tutto insieme). È una modalità della vista Magazzino.
-function renderSchede(lid, l) {
-  const whs = warehousesOf(lid);
-  if (sWh !== 'all' && !whs.some(w => w.id === sWh)) sWh = 'all';   // magazzino non più valido → tutti
-  const all = schede(lid);
-
-  // filtri combinati in AND
-  let list = all;
-  if (sTipo !== 'all') list = list.filter(s => s.type === sTipo);
-  if (sWh !== 'all') list = list.filter(s => s.fromWh === sWh || s.toWh === sWh);
-  const cut = periodCutoff(sPeriod);
-  if (cut) list = list.filter(s => (s.ts || 0) >= cut);
-  const term = sq.trim().toLowerCase();
-  if (term) list = list.filter(s => (s.label || '').toLowerCase().includes(term) || (s.note || '').toLowerCase().includes(term) || s.lines.some(ln => (ln.name || '').toLowerCase().includes(term) || (ln.code || '').toLowerCase().includes(term)));
-
-  let h = `<div class="pagehead"><h1>🧾 Schede di movimento</h1><span class="sub">${esc((l.emoji || '📦') + ' ' + l.name)}</span></div>`;
-  h += `<div class="btnrow" style="margin-bottom:10px"><button class="btn sm" data-back>← Giacenze</button></div>`;
-
-  // filtri: tipo (chips) · magazzino/periodo (select) · ricerca
-  const tipoChip = (v, lbl) => `<button class="chip ${sTipo === v ? 'on' : ''}" data-stipo="${v}">${lbl}</button>`;
-  h += `<div class="chips" style="margin-bottom:8px">${tipoChip('all', 'Tutte')}${tipoChip('carico', '⬆️ Carichi')}${tipoChip('prelievo', '⬇️ Prelievi')}${tipoChip('transfer', '↔️ Trasferimenti')}${tipoChip('rettifica', '📋 Rettifiche')}</div>`;
-  const whOpts = `<option value="all">Tutti i magazzini</option>` + whs.map(w => `<option value="${w.id}" ${sWh === w.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
-  const perOpts = SCHEDE_PERIODS.map(([v, lbl]) => `<option value="${v}" ${sPeriod === v ? 'selected' : ''}>${esc(lbl)}</option>`).join('');
-  h += `<div class="frow" style="margin-bottom:8px">
-    <div class="field" style="margin:0"><label>Magazzino</label><select id="s_wh">${whOpts}</select></div>
-    <div class="field" style="margin:0"><label>Periodo</label><select id="s_period">${perOpts}</select></div>
-  </div>`;
-  h += `<div class="field"><input id="s_q" placeholder="Cerca nome, prodotto o nota…" value="${esc(sq)}"></div>`;
-
-  const anyFilter = !!term || sTipo !== 'all' || sWh !== 'all' || sPeriod !== 'all';
-  h += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
-    <span class="muted" style="font-size:12.5px">${all.length} sched${all.length === 1 ? 'a' : 'e'} · ${list.length} nel filtro</span>
-    ${anyFilter ? '<button class="btn sm" data-reset>Azzera</button>' : ''}
-  </div>`;
-
-  if (!all.length) return h + `<div class="card empty" style="padding:18px">Nessuna scheda.<br><span class="muted">Carichi, prelievi e trasferimenti multi-prodotto compaiono qui.</span></div>`;
-  if (!list.length) return h + `<div class="card empty">Nessuna scheda con questi filtri.</div>`;
-
-  const visible = list.slice(0, schedeShown);
-  const canDel = cDelScheda();
-  h += `<div class="list">${visible.map(s => schedaRow(lid, s, canDel)).join('')}</div>`;
-  if (list.length > visible.length) {
-    h += `<div class="btnrow" style="justify-content:center;margin-top:10px"><button class="btn" data-more>Mostra altri (restano ${list.length - visible.length})</button></div>`;
-  }
-  return h;
-}
-
-// interazioni della visuale Schede (chiamata da bind quando mode === 'schede')
-function bindSchede(root) {
-  const lid = activeLocale();
-  const rerender = () => { root.innerHTML = render(); bind(root); };
-  const reset = () => { schedeShown = SCHEDE_STEP; };   // ricomincia dall'inizio quando cambia un filtro
-  root.querySelector('[data-back]').onclick = () => { mode = 'stock'; rerender(); };
-  root.querySelectorAll('[data-stipo]').forEach(b => b.onclick = () => { sTipo = b.dataset.stipo; reset(); rerender(); });
-  const whSel = root.querySelector('#s_wh'); if (whSel) whSel.onchange = () => { sWh = whSel.value; reset(); rerender(); };
-  const perSel = root.querySelector('#s_period'); if (perSel) perSel.onchange = () => { sPeriod = perSel.value; reset(); rerender(); };
-  const qi = root.querySelector('#s_q');
-  if (qi) qi.oninput = () => { sq = qi.value; reset(); const pos = qi.selectionStart; rerender(); const n = root.querySelector('#s_q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
-  root.querySelector('[data-reset]')?.addEventListener('click', () => { sq = ''; sTipo = 'all'; sWh = 'all'; sPeriod = 'all'; reset(); rerender(); });
-  root.querySelector('[data-more]')?.addEventListener('click', () => { schedeShown += SCHEDE_STEP; rerender(); });
-  // elimina dalla riga (storno): stopPropagation per non aprire il dettaglio della stessa riga
-  root.querySelectorAll('[data-schedadel]').forEach(b => b.onclick = e => {
-    e.stopPropagation();
-    const s = schedaById(lid, b.dataset.schedadel);
-    if (s) confirmDeleteScheda(lid, s, rerender);
-  });
-  // il dettaglio è uno sheet sopra la visuale: chiudendolo si torna qui (nessun back esplicito)
-  root.querySelectorAll('[data-scheda]').forEach(el => el.onclick = () => schedaDetail(lid, el.dataset.scheda, null, rerender));
-}
-function schedaDetail(lid, batchId, back, onChange) {
+export function schedaDetail(lid, batchId, back, onChange) {
   const s = schedaById(lid, batchId);
   if (!s) { toast('Scheda non trovata'); back && back(); return; }
   const isTransfer = s.type === 'transfer';
@@ -1363,7 +1275,7 @@ function schedaDetail(lid, batchId, back, onChange) {
 // Conferma distruttiva dell'eliminazione di una scheda, con riepilogo (tipo, data, magazzini, righe/pezzi,
 // effetto sulle giacenze) e avviso se lo storno porterebbe qualche giacenza in negativo (clampata a 0).
 // `after` gira dopo l'eliminazione; `onCancel` all'annulla (default: chiudi).
-function confirmDeleteScheda(lid, s, after, onCancel = closeSheet) {
+export function confirmDeleteScheda(lid, s, after, onCancel = closeSheet) {
   const prev = schedaDeletionPreview(lid, s.batchId);
   const pezzi = s.lines.reduce((a, ln) => a + (ln.qty || 0), 0);
   const isTransfer = s.type === 'transfer', isCarico = s.type === 'carico', isRettifica = s.type === 'rettifica';
@@ -1423,11 +1335,17 @@ function renameSchedaModal(lid, s, back, onChange) {
 }
 
 export function bind(root) {
-  if (mode === 'schede') return bindSchede(root);
   if (mode === 'thresholds') return bindThresholds(root);
   if (mode === 'inventory') return bindInventory(root);
   const lid = activeLocale();
   const rerender = () => { root.innerHTML = render(); bind(root); };
+  // tendina "Impostazioni" della toolbar: toggle + chiusura al click di una voce (come la nav in app.js)
+  const cfgToggle = root.querySelector('#magCfgToggle');
+  const cfgMenu = root.querySelector('#magCfgMenu');
+  if (cfgToggle && cfgMenu) {
+    cfgToggle.onclick = e => { e.stopPropagation(); cfgMenu.classList.toggle('open'); };
+    cfgMenu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => cfgMenu.classList.remove('open')));
+  }
   root.querySelectorAll('[data-scope]').forEach(b => b.onclick = () => { scope = b.dataset.scope; rerender(); });
   root.querySelector('[data-receipts]')?.addEventListener('click', () => receiptsSheet(lid, rerender));
   root.querySelector('[data-transfers]')?.addEventListener('click', () => transfersSheet(lid, rerender));
@@ -1447,7 +1365,6 @@ export function bind(root) {
     thrFilter.q = ''; thrFilter.cat = 'all'; thrFilter.sub = 'all'; thrFilter.sup = 'all';
     rerender();
   });
-  root.querySelector('[data-schede]')?.addEventListener('click', () => { mode = 'schede'; schedeShown = SCHEDE_STEP; rerender(); });
   root.querySelector('[data-managewh]')?.addEventListener('click', () => manageWarehouses(lid, rerender));
   root.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; rerender(); });
   const qi = root.querySelector('#mq');

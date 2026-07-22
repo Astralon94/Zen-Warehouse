@@ -1,6 +1,6 @@
 {
   "name": "zen-warehouse-server",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "private": true,
   "type": "module",
   "description": "Zen-Warehouse (server) — versione profonda di Zen-Orders: Node http + node:sqlite, zero dipendenze. Ordini, storico, report, scorte.",

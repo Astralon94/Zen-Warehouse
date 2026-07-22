@@ -5,6 +5,7 @@ import { esc, safeFileName, fmtDateFull } from '../../domain/util.js';
 import { openSheet, closeSheet, toast, confirmDialog, downloadText } from '../dom.js';
 import { newLocale } from '../../state/model.js';
 import { activeLocale } from '../../domain/warehouse.js';
+import * as utenti from './utenti.js';
 
 export function render() {
   const cTheme = can('impostazioni.manage');     // tema + impostazioni
@@ -16,6 +17,7 @@ export function render() {
   const cExport = can('dati.export');             // esporta backup
   const cImport = can('dati.import');             // importa/sostituisci
   const cReset = can('dati.reset');               // azzera database
+  const cUsers = can('utenti.manage');            // gestione utenti (sezione)
   const theme = (data.settings && data.settings.theme) || 'auto';
   const themeBtn = (v, label) => `<button class="chip ${theme === v ? 'on' : ''}" data-theme="${v}">${label}</button>`;
 
@@ -40,6 +42,14 @@ export function render() {
         ${(cLocDel && data.locali.length > 1) ? `<button class="btn sm danger" data-dell="${l.id}">Elimina</button>` : ''}
       </div>`).join('');
     h += `</div>${cLocCrea ? `<div class="btnrow" style="margin:10px 0 18px"><button class="btn" data-newloc>+ Nuovo locale</button></div>` : '<div style="margin-bottom:18px"></div>'}`;
+  }
+
+  // Utenti (accessi e permessi) — solo per chi può gestirli. Montata su un contenitore che si autogestisce.
+  if (cUsers) {
+    any = true;
+    h += `<div class="section-title">👥 Utenti</div>
+      <div class="muted" style="font-size:12px;margin:-2px 2px 10px">Gestisci accessi e permessi degli operatori.</div>
+      <div id="utentiBox" style="margin-bottom:18px"></div>`;
   }
 
   // Backup
@@ -82,6 +92,10 @@ export function render() {
 }
 
 export function bind(root) {
+  // Sezione Utenti: la vista utenti gestisce da sé il proprio contenitore (render/bind/redraw su #utentiBox).
+  const uBox = root.querySelector('#utentiBox');
+  if (uBox && can('utenti.manage')) { uBox.innerHTML = utenti.render(); utenti.bind(uBox); }
+
   root.querySelectorAll('[data-theme]').forEach(b => b.onclick = () => { setTheme(b.dataset.theme); rerender(root); });
 
   root.querySelector('[data-newloc]')?.addEventListener('click', () => {

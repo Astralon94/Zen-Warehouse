@@ -1,5 +1,6 @@
-// ============ Vista Utenti (gestione accessi e permessi) ============
-// Riservata a chi ha `utenti.manage` (gate di nav in app.js + guardia backend).
+// ============ Gestione utenti (accessi e permessi) ============
+// NON è più una voce di nav: è una SEZIONE dentro la vista Impostazioni (montata su un suo contenitore,
+// che gestisce da sé via redraw). Riservata a chi ha `utenti.manage` (guardia backend + gate in Impostazioni).
 // I dati arrivano dagli endpoint /api/utenti; il registro permessi/ruoli da meta.
 import { esc } from '../../domain/util.js';
 import { openSheet, closeSheet, toast, confirmDialog } from '../dom.js';
@@ -11,9 +12,10 @@ let rootEl = null;
 const permLabel = k => (meta?.permessi || []).find(p => p.key === k)?.label || k;
 
 export function render() {
-  let h = `<div class="pagehead"><h1>Utenti</h1><span class="sub">accessi e permessi</span></div>`;
-  // Difesa a valle del gating di nav: senza `utenti.manage` non si mostra nulla.
-  if (!can('utenti.manage')) return h + `<div class="card empty">Sezione riservata agli amministratori.</div>`;
+  // Nessun pagehead: il titolo è la section-title "👥 Utenti" della vista Impostazioni.
+  let h = '';
+  // Difesa a valle del gating: senza `utenti.manage` non si mostra nulla.
+  if (!can('utenti.manage')) return `<div class="card empty">Sezione riservata agli amministratori.</div>`;
   h += `<div class="btnrow" style="margin-bottom:12px"><button class="btn primary" data-new>+ Nuovo utente</button></div>`;
   if (usersCache === null) return h + `<div class="card empty">Caricamento…</div>`;
   if (!usersCache.length) return h + `<div class="card empty">Nessun utente.</div>`;

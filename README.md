@@ -6,7 +6,7 @@ Ordini fornitori e magazzino **self-hosted e 100% locale**, pensato per attivit�
 
 - **Organizzazione per locale** — ogni punto vendita ha le sue categorie/tipologie (con sottocategorie), i suoi punti di consegna e il suo giro di ordini; prodotti e fornitori condivisi dove serve.
 - **Ordine** — schermata di compilazione rapida per fornitore: quantità sui prodotti, note, generazione del **PDF per fornitore** pronto da inviare.
-- **Storico** — tutti gli ordini inviati, ricercabili e riapribili; un ordine passato si può clonare come base per il prossimo.
+- **Movimenti** — registro unificato di ordini inviati, schede e movimenti singoli, con badge per tipo e filtri; un ordine passato si può ricercare, riaprire e clonare come base per il prossimo.
 - **Report** — analisi su ordinato e fornitori per periodo, con riepiloghi e confronti.
 - **Magazzino** — scorte con movimenti di carico/scarico e situazione per prodotto, con carico automatico opzionale dagli ordini in consegna e **trasferimenti interni** tramite documento di trasporto (DDT) tra magazzini o verso l'esterno.
 - **Database** — anagrafiche di prodotti, categorie, fornitori e punti di consegna con editing rapido.

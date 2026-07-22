@@ -7,25 +7,29 @@ import { esc } from '../domain/util.js';
 
 import * as ordine from './views/ordine.js';
 import * as dashboard from './views/dashboard.js';
-import * as storico from './views/storico.js';
+import * as movimenti from './views/movimenti.js';
 import * as report from './views/report.js';
 import * as magazzino from './views/magazzino.js';
 import * as database from './views/database.js';
 import * as impostazioni from './views/impostazioni.js';
-import * as utenti from './views/utenti.js';
 
-// Registro delle viste: Ordine · Dashboard · Storico · Report · Magazzino · Database · Utenti · Impostazioni.
+// Registro delle viste: Ordine · Dashboard · Movimenti · Magazzino · Database · Report · Impostazioni.
+// La chiave 'stor' resta invariata (allineata al registro nav del server, perm 'ordini.view'); cambia solo
+// l'etichetta (Storico → Movimenti) e il modulo, che ora unifica ordini + schede di movimento.
+// Gli Utenti non sono più una voce di nav: la loro gestione vive dentro la vista Impostazioni.
 const VIEWS = {
   ord: { mod: ordine, title: 'Ordine', icon: '🛒' },
   dash: { mod: dashboard, title: 'Dashboard', icon: '📊' },
-  stor: { mod: storico, title: 'Storico', icon: '🕘' },
+  stor: { mod: movimenti, title: 'Movimenti', icon: '🔀' },
   rep: { mod: report, title: 'Report', icon: '📈' },
   mag: { mod: magazzino, title: 'Magazzino', icon: '🏬' },
   db: { mod: database, title: 'Database', icon: '📦' },
-  utenti: { mod: utenti, title: 'Utenti', icon: '👥' },
   set: { mod: impostazioni, title: 'Impostazioni', icon: '⚙' }
 };
-const ORDER = ['ord', 'dash', 'stor', 'rep', 'mag', 'db', 'utenti', 'set'];
+const ORDER = ['ord', 'dash', 'stor', 'mag', 'db', 'rep', 'set'];
+// Alias difensivi per route salvate o da link: 'utenti' → Impostazioni (ora sezione), le vecchie chiavi
+// dello Storico → Movimenti (chiave 'stor'). Evita schermate vuote se arriva una route non più esistente.
+const ROUTE_ALIAS = { utenti: 'set', storico: 'stor', movimenti: 'stor', mov: 'stor' };
 
 let current = 'ord';
 let mql = window.matchMedia('(prefers-color-scheme: dark)');
@@ -37,7 +41,7 @@ export function applyTheme() {
 }
 mql.addEventListener('change', applyTheme);
 
-export function go(view) { current = view; renderApp(); window.scrollTo(0, 0); }
+export function go(view) { current = ROUTE_ALIAS[view] || view; renderApp(); window.scrollTo(0, 0); }
 
 // ---- Gating della navigazione (multiutenza) ----
 // Le voci visibili = quelle di ORDER accessibili all'utente secondo il registro
