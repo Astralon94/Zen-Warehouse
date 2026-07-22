@@ -2,7 +2,15 @@
 import { data } from '../../state/store.js';
 import { esc, fmtEur, round2 } from '../../domain/util.js';
 import { activeLocale, activeLocaleObj, counts, lowStock, ordersOf, product, warehouseValue } from '../../domain/warehouse.js';
+import { pendingReceipts, pendingTransfersOf } from '../../domain/stock.js';
+import { can } from '../../state/auth.js';
 import { go } from '../app.js';
+import { requestSheet } from './magazzino.js';
+
+// Avvisi/azioni pendenti gatinati come i bottoni della toolbar Magazzino:
+//   ricezioni da ordini = magazzino.ricevi · DDT/trasferimenti = magazzino.trasferimento oppure scarico.
+const canReceive = () => can('magazzino.ricevi');
+const canDdt = () => can('magazzino.trasferimento') || can('magazzino.scarico');
 
 // spesa di un ordine dallo storico: snapshot di riga (ln.price) → prezzo attuale prodotto → 0
 function orderSpend(o) {
@@ -24,6 +32,30 @@ export function render() {
   const kpi = (lbl, val, sub = '') => `<div class="card kpi"><div class="lbl">${esc(lbl)}</div><div class="val tnum">${val}</div>${sub ? `<div class="muted" style="font-size:11.5px">${esc(sub)}</div>` : ''}</div>`;
 
   let h = `<div class="pagehead"><h1>Dashboard</h1><span class="sub">${esc((l.emoji || '📦') + ' ' + l.name)}</span></div>`;
+
+  // ---- Avvisi pendenti (azionabili): in evidenza, sopra i KPI. Ogni avviso è visibile solo a chi può
+  // compiere l'azione e porta in Magazzino aprendo direttamente la relativa sheet. Nulla di pendente = niente card.
+  const alerts = [];
+  if (canReceive()) {
+    const rec = pendingReceipts(lid);
+    if (rec.length) {
+      const nOrd = new Set(rec.map(s => s.order.id)).size;
+      alerts.push(`<div class="card click" data-open="receipts" style="border-color:var(--accent);cursor:pointer">
+        <b>📥 ${rec.length} ricezion${rec.length === 1 ? 'e' : 'i'} in attesa da Carico da ordini</b>
+        <div class="muted" style="font-size:12.5px;margin-top:4px">${nOrd} ordin${nOrd === 1 ? 'e' : 'i'} da ricevere · tocca per caricare la merce</div>
+      </div>`);
+    }
+  }
+  if (canDdt()) {
+    const tr = pendingTransfersOf(lid);
+    if (tr.length) {
+      alerts.push(`<div class="card click" data-open="transfers" style="border-color:var(--accent);cursor:pointer">
+        <b>🚚 ${tr.length} trasferiment${tr.length === 1 ? 'o' : 'i'} da consegnare/convalidare</b>
+        <div class="muted" style="font-size:12.5px;margin-top:4px">DDT interni preparati · tocca per convalidare</div>
+      </div>`);
+    }
+  }
+  if (alerts.length) h += `<div class="grid" style="gap:10px;margin-bottom:14px">${alerts.join('')}</div>`;
 
   h += `<div class="grid k4" style="margin-bottom:14px">
     ${kpi('Prodotti', c.prodotti)}
@@ -51,6 +83,7 @@ export function render() {
   h += `<div class="section-title">Azioni rapide</div>
     <div class="btnrow">
       <button class="btn primary" data-go="ord">🛒 Nuovo ordine</button>
+      ${canDdt() ? '<button class="btn" data-open="transfers">🚚 Trasferimenti</button>' : ''}
       <button class="btn" data-go="mag">🏬 Magazzino</button>
       <button class="btn" data-go="db">📦 Database</button>
       <button class="btn" data-go="rep">📈 Report</button>
@@ -74,4 +107,6 @@ export function render() {
 
 export function bind(root) {
   root.querySelectorAll('[data-go]').forEach(el => el.onclick = () => go(el.dataset.go));
+  // scorciatoie verso Magazzino che aprono direttamente una sheet (ricezioni / trasferimenti)
+  root.querySelectorAll('[data-open]').forEach(el => el.onclick = () => { requestSheet(el.dataset.open); go('mag'); });
 }

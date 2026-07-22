@@ -85,8 +85,8 @@ export const PERMISSIONS = [
 // tema/aggiornamento/export/import/reset/locali gestite da permessi distinti).
 export const NAV = [
   { key: 'ord',    icon: '🛒', label: 'Ordine',       perm: 'ordini.view' },
-  { key: 'dash',   icon: '📊', label: 'Dashboard',    perm: 'dashboard.view' },
-  { key: 'stor',   icon: '🕘', label: 'Storico',      perm: 'ordini.view' },
+  { key: 'dash',   icon: '◷',  label: 'Dashboard',    perm: 'dashboard.view' },
+  { key: 'stor',   icon: '↕',  label: 'Movimenti',    perm: 'ordini.view' },
   { key: 'rep',    icon: '📈', label: 'Report',       perm: 'report.view' },
   { key: 'mag',    icon: '🏬', label: 'Magazzino',    perm: 'magazzino.view' },
   { key: 'db',     icon: '📦', label: 'Database',     perm: 'database.view' },

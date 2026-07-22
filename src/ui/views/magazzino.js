@@ -51,6 +51,12 @@ let scope = 'all';     // 'all' (totale) | warehouseId
 // La consultazione delle schede di movimento vive ora nella sezione Movimenti.
 let mode = 'stock';                             // 'stock' (giacenze) | 'thresholds' | 'inventory'
 
+// ---- Apertura diretta di una sheet da una scorciatoia esterna (avvisi/azioni della Dashboard) ----
+// La Dashboard imposta la richiesta e naviga qui con go('mag'); bind() la consuma al PRIMO render
+// (stesso pattern di consumeViewEntry). Forziamo mode='stock' perché la sheet vive nella vista giacenze.
+let pendingSheet = null;                         // 'receipts' | 'transfers'
+export function requestSheet(name) { pendingSheet = name; mode = 'stock'; }
+
 // ---- Stato delle sezioni dedicate "Soglie di scorta" e "Inventario" (a tutta pagina) ----
 // Vive in memoria di vista come lo stato Schede: sopravvive ai redraw interni, si azzera all'ingresso.
 // Filtri prodotti condivisi (stessa forma { q, cat, sub, sup }): vedi pfNormalize/pfApply/pfBar/pfBind.
@@ -1387,5 +1393,9 @@ export function bind(root) {
   root.querySelectorAll('[data-prod]').forEach(el => el.onclick = () => openProduct(el.dataset.prod, rerender));
   root.querySelectorAll('[data-in]').forEach(b => b.onclick = e => { e.stopPropagation(); const p = product(b.dataset.in); withWarehouse(lid, 'Carico · scegli magazzino', wh => moveModal(lid, p, 'in', wh, rerender), p); });
   root.querySelectorAll('[data-out]').forEach(b => b.onclick = e => { e.stopPropagation(); withWarehouse(lid, 'Scarico · scegli magazzino', wh => moveModal(lid, product(b.dataset.out), 'out', wh, rerender)); });
+  // scorciatoia esterna (Dashboard): apre subito la sheet richiesta, gatinata come i bottoni della toolbar
+  const req = pendingSheet; pendingSheet = null;
+  if (req === 'receipts' && cReceive()) receiptsSheet(lid, rerender);
+  else if (req === 'transfers' && cDdt()) transfersSheet(lid, rerender);
   if (consumeViewEntry()) gentleAutofocus(root.querySelector('#mq'));
 }

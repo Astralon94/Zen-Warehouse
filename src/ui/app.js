@@ -13,25 +13,25 @@ import * as magazzino from './views/magazzino.js';
 import * as database from './views/database.js';
 import * as impostazioni from './views/impostazioni.js';
 
-// Registro delle viste: Ordine · Dashboard · Movimenti · Magazzino · Database · Report · Impostazioni.
+// Registro delle viste: Dashboard · Ordine · Movimenti · Magazzino · Database · Report · Impostazioni.
 // La chiave 'stor' resta invariata (allineata al registro nav del server, perm 'ordini.view'); cambia solo
 // l'etichetta (Storico → Movimenti) e il modulo, che ora unifica ordini + schede di movimento.
 // Gli Utenti non sono più una voce di nav: la loro gestione vive dentro la vista Impostazioni.
 const VIEWS = {
   ord: { mod: ordine, title: 'Ordine', icon: '🛒' },
-  dash: { mod: dashboard, title: 'Dashboard', icon: '📊' },
-  stor: { mod: movimenti, title: 'Movimenti', icon: '🔀' },
+  dash: { mod: dashboard, title: 'Dashboard', icon: '◷' },
+  stor: { mod: movimenti, title: 'Movimenti', icon: '↕' },
   rep: { mod: report, title: 'Report', icon: '📈' },
   mag: { mod: magazzino, title: 'Magazzino', icon: '🏬' },
   db: { mod: database, title: 'Database', icon: '📦' },
   set: { mod: impostazioni, title: 'Impostazioni', icon: '⚙' }
 };
-const ORDER = ['ord', 'dash', 'stor', 'mag', 'db', 'rep', 'set'];
+const ORDER = ['dash', 'ord', 'stor', 'mag', 'db', 'rep', 'set'];
 // Alias difensivi per route salvate o da link: 'utenti' → Impostazioni (ora sezione), le vecchie chiavi
 // dello Storico → Movimenti (chiave 'stor'). Evita schermate vuote se arriva una route non più esistente.
 const ROUTE_ALIAS = { utenti: 'set', storico: 'stor', movimenti: 'stor', mov: 'stor' };
 
-let current = 'ord';
+let current = 'dash';
 let mql = window.matchMedia('(prefers-color-scheme: dark)');
 
 export function applyTheme() {

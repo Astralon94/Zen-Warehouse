@@ -10,7 +10,7 @@ Ordini fornitori e magazzino **self-hosted e 100% locale**, pensato per attivit�
 - **Report** — analisi su ordinato e fornitori per periodo, con riepiloghi e confronti.
 - **Magazzino** — scorte con movimenti di carico/scarico e situazione per prodotto, con carico automatico opzionale dagli ordini in consegna e **trasferimenti interni** tramite documento di trasporto (DDT) tra magazzini o verso l'esterno.
 - **Database** — anagrafiche di prodotti, categorie, fornitori e punti di consegna con editing rapido.
-- **Dashboard** — quadro d'insieme dell'attività recente.
+- **Dashboard** — schermata d'ingresso con il quadro d'insieme dell'attività recente e avvisi cliccabili per le ricezioni da ordini e i trasferimenti da convalidare.
 - **Multi-utente** — login con permessi granulari per sezione e azione.
 - **Aggiornamenti in-app** — l'app controlla le release di questo repository e si aggiorna da sola (vedi sotto).
 
